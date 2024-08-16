@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "kg-logger"
+version = "0.0.0"
+description = "logger for can + temperature sensors"
+authors = ["Vladimir Ginzburg <vova.rambler@mail.ru>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+python-can = "^4.4.2"
+typer = "^0.12.3"
+requests = "^2.32.3"
+dropbox = "^12.0.2"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+start_logging = "KG_logger.can_logger:app"
