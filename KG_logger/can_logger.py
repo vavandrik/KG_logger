@@ -38,7 +38,11 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
         log_number += 1
         current_log_size = 0
         log_file = Path(log_dir) / f"can_log_{log_number}.log"
-        logger.removeHandler(logger.handlers[0])
+
+        # Проверяем, есть ли обработчики, прежде чем удалять
+        if logger.handlers:
+            logger.removeHandler(logger.handlers[0])
+
         file_handler = logging.FileHandler(log_file, mode='w')
         logger.addHandler(file_handler)
         return log_file
