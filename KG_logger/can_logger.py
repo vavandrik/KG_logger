@@ -51,8 +51,8 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
         logger.addHandler(file_handler)
 
         # Пишем заголовок CSV файла для совместимости с SavvyCAN
-        file_handler.setFormatter(logging.Formatter('%(asctime)s,%(message)s'))
-        logger.info("Timestamp,ID,IDE,DLC,Data")
+        file_handler.setFormatter(logging.Formatter('%(message)s'))
+        logger.info("Time,ID,Ext,RTR,Dir,Bus,Len,Data")
 
         return log_file
 
@@ -64,9 +64,11 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
         while True:
             msg = bus.recv()  # Получаем сообщение с CAN
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
-            log_entry = f"{timestamp},{msg.arbitration_id:X},{msg.is_extended_id},{msg.dlc},{msg.data.hex()}"
-            logger.info(log_entry)  # Логируем сообщение
-            current_log_size += len(log_entry)
+            msg_data = ' '.join(f'{byte:02X}' for byte in msg.data)
+            logger.info(f"{timestamp},{msg.arbitration_id:X},{int(msg.is_extended_id)},{int(msg.is_remote_frame)},"
+                        f"{'Rx' if msg.is_rx else 'Tx'},{msg.channel},{msg.dlc},{msg_data}")
+
+            current_log_size += len(str(msg))
 
             if current_log_size >= max_file_size * 1024 * 1024:
                 upload_to_dropbox(log_file, dropbox_token, dropbox_path)  # Загружаем файл в Dropbox
