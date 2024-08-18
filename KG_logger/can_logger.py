@@ -1,13 +1,17 @@
-from datetime import datetime
-import can
 import logging
 from pathlib import Path
-import typer
+import can
+import threading
+import time
+from datetime import datetime
+from w1thermsensor import W1ThermSensor
 import dropbox
 from dropbox.files import WriteMode
 import os
+import typer
 
 app = typer.Typer()
+
 
 def upload_to_dropbox(log_file, dropbox_token, dropbox_path="/"):
     dbx = dropbox.Dropbox(dropbox_token)
@@ -19,6 +23,16 @@ def upload_to_dropbox(log_file, dropbox_token, dropbox_path="/"):
             logging.info(f"Uploaded {log_file} to Dropbox")
         except dropbox.exceptions.ApiError as e:
             logging.error(f"Failed to upload {log_file} to Dropbox: {e}")
+
+
+def read_temperature_sensors(logger):
+    while True:
+        sensors = W1ThermSensor.get_available_sensors()
+        for sensor in sensors:
+            temperature = sensor.get_temperature()
+            logger.info(f"Sensor {sensor.id}: {temperature} °C")
+        time.sleep(5)  # Задержка между чтениями
+
 
 @app.command()
 def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.g., can0"),
@@ -36,7 +50,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
     log_number = 0
     current_log_size = 0
 
-    def rotate_log_file(log_name: str):
+    def rotate_log_file():
         nonlocal log_number, current_log_size, log_dir
         log_number += 1
         current_log_size = 0
@@ -49,33 +63,30 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
 
         file_handler = logging.FileHandler(log_file, mode='w')
         logger.addHandler(file_handler)
-
-        # Пишем заголовок CSV файла для совместимости с SavvyCAN
-        file_handler.setFormatter(logging.Formatter('%(message)s'))
-        logger.info("Time,ID,Ext,RTR,Dir,Bus,Len,Data")
-
         return log_file
 
-    log_file = rotate_log_file(log_name)
+    log_file = rotate_log_file()
+
+    # Запуск потока для считывания данных с датчиков температуры
+    temp_thread = threading.Thread(target=read_temperature_sensors, args=(logger,))
+    temp_thread.daemon = True
+    temp_thread.start()
 
     try:
         bus = can.interface.Bus(channel=interface, bustype='socketcan')
 
         while True:
             msg = bus.recv()  # Получаем сообщение с CAN
-            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
-            msg_data = ' '.join(f'{byte:02X}' for byte in msg.data)
-            logger.info(f"{timestamp},{msg.arbitration_id:X},{int(msg.is_extended_id)},{int(msg.is_remote_frame)},"
-                        f"{'Rx' if msg.is_rx else 'Tx'},{msg.channel},{msg.dlc},{msg_data}")
-
+            logger.info(f"{msg.timestamp},{msg.arbitration_id:X},{msg.is_extended_id},{msg.is_remote_frame},{'Rx' if msg.direction else 'Tx'},{msg.channel},{msg.dlc},{' '.join(f'{byte:02X}' for byte in msg.data)}")  # Логируем сообщение в формате CSV
             current_log_size += len(str(msg))
 
             if current_log_size >= max_file_size * 1024 * 1024:
                 upload_to_dropbox(log_file, dropbox_token, dropbox_path)  # Загружаем файл в Dropbox
-                log_file = rotate_log_file(log_name)  # Переход на новый файл
+                log_file = rotate_log_file()  # Переход на новый файл
 
     except (OSError, can.CanError) as e:
         logger.error(f"Error with CAN interface: {e}")
+
 
 if __name__ == "__main__":
     app()

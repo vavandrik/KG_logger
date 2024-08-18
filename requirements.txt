@@ -1,3 +1,4 @@
 typer
 python-can
 dropbox
+w1thermsensor

@@ -480,6 +480,25 @@ socks = ["pysocks (>=1.5.6,!=1.5.7,<2.0)"]
 zstd = ["zstandard (>=0.18.0)"]
 
 [[package]]
+name = "w1thermsensor"
+version = "2.3.0"
+description = "A Python package and CLI tool to work with w1 temperature sensors like DS1822, DS18S20 & DS18B20 on the Raspberry Pi, Beagle Bone and other devices."
+optional = false
+python-versions = ">=3.7"
+files = [
+    {file = "w1thermsensor-2.3.0-py2.py3-none-any.whl", hash = "sha256:16f3236d401be809fe46aa4166c4441cc962b398a561aa60659e1fbe553aac94"},
+    {file = "w1thermsensor-2.3.0.tar.gz", hash = "sha256:9fbc0ae0dd66cd9b54c6d62ed7bab2b88e148c987fe7d5060f476f90e81c2270"},
+]
+
+[package.dependencies]
+click = "*"
+
+[package.extras]
+async = ["aiofiles"]
+dev = ["aiofiles", "black", "check-manifest", "coverage[toml] (>=5.0.2)", "flake8", "pytest (>5)", "pytest-asyncio", "pytest-mock", "towncrier"]
+tests = ["aiofiles", "coverage[toml] (>=5.0.2)", "pytest (>5)", "pytest-asyncio", "pytest-mock"]
+
+[[package]]
 name = "wrapt"
 version = "1.16.0"
 description = "Module for decorators, wrappers and monkey patching."
@@ -561,4 +580,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.12"
-content-hash = "71a933adb181743e4861bb5e8867542f6486728daf39ea81347d6a4555334059"
+content-hash = "f3a48b395224ba9e450a9aa9968bfbc53f175b8055285cdc60ab4ff28fbd4ec5"
