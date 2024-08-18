@@ -1,17 +1,15 @@
+from datetime import datetime
+import can
 import logging
 from pathlib import Path
-import can
-import threading
-import time
-from datetime import datetime
-from w1thermsensor import W1ThermSensor
+import typer
 import dropbox
 from dropbox.files import WriteMode
 import os
-import typer
+import time
+from w1thermsensor import W1ThermSensor, SensorNotReadyError
 
 app = typer.Typer()
-
 
 def upload_to_dropbox(log_file, dropbox_token, dropbox_path="/"):
     dbx = dropbox.Dropbox(dropbox_token)
@@ -23,16 +21,6 @@ def upload_to_dropbox(log_file, dropbox_token, dropbox_path="/"):
             logging.info(f"Uploaded {log_file} to Dropbox")
         except dropbox.exceptions.ApiError as e:
             logging.error(f"Failed to upload {log_file} to Dropbox: {e}")
-
-
-def read_temperature_sensors(logger):
-    while True:
-        sensors = W1ThermSensor.get_available_sensors()
-        for sensor in sensors:
-            temperature = sensor.get_temperature()
-            logger.info(f"Sensor {sensor.id}: {temperature} °C")
-        time.sleep(5)  # Задержка между чтениями
-
 
 @app.command()
 def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.g., can0"),
@@ -63,22 +51,46 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
 
         file_handler = logging.FileHandler(log_file, mode='w')
         logger.addHandler(file_handler)
+        # Добавляем заголовок CSV
+        logger.info("Timestamp,ID,Ext,RTR,Dir,Bus,Len,Data,Temperature_1,Temperature_2,Temperature_3,Temperature_4,Temperature_5")
         return log_file
 
     log_file = rotate_log_file()
 
-    # Запуск потока для считывания данных с датчиков температуры
-    temp_thread = threading.Thread(target=read_temperature_sensors, args=(logger,))
-    temp_thread.daemon = True
-    temp_thread.start()
+    sensors = W1ThermSensor.get_available_sensors()
+    sensor_count = len(sensors)
+
+    def read_temperatures():
+        temperatures = []
+        for i in range(5):  # Предполагаем, что максимум 5 датчиков
+            try:
+                if i < sensor_count:
+                    temperature = sensors[i].get_temperature()
+                else:
+                    temperature = "Unavailable"
+            except SensorNotReadyError:
+                temperature = "Unavailable"
+            temperatures.append(temperature)
+        return temperatures
 
     try:
         bus = can.interface.Bus(channel=interface, bustype='socketcan')
+        last_temp_read_time = time.time()
 
         while True:
             msg = bus.recv()  # Получаем сообщение с CAN
-            logger.info(f"{msg.timestamp},{msg.arbitration_id:X},{msg.is_extended_id},{msg.is_remote_frame},{'Rx'},{msg.channel},{msg.dlc},{' '.join(f'{byte:02X}' for byte in msg.data)}")  # Логируем сообщение в формате CSV
-            current_log_size += len(str(msg))
+            current_time = time.time()
+
+            # Считываем температуру каждые 5 секунд
+            if current_time - last_temp_read_time >= 5:
+                temperatures = read_temperatures()
+                last_temp_read_time = current_time
+            else:
+                temperatures = ["Unavailable"] * 5  # По умолчанию, если не время для считывания
+
+            log_entry = f"{datetime.now().isoformat()},{msg.arbitration_id},{msg.is_extended_id},{msg.is_remote_frame},{msg.is_error_frame},{msg.channel},{msg.dlc},{msg.data},{','.join(map(str, temperatures))}"
+            logger.info(log_entry)
+            current_log_size += len(log_entry)
 
             if current_log_size >= max_file_size * 1024 * 1024:
                 upload_to_dropbox(log_file, dropbox_token, dropbox_path)  # Загружаем файл в Dropbox
@@ -86,7 +98,6 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
 
     except (OSError, can.CanError) as e:
         logger.error(f"Error with CAN interface: {e}")
-
 
 if __name__ == "__main__":
     app()
