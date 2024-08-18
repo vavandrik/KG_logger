@@ -77,7 +77,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
 
         while True:
             msg = bus.recv()  # Получаем сообщение с CAN
-            logger.info(f"{msg.timestamp},{msg.arbitration_id:X},{msg.is_extended_id},{msg.is_remote_frame},{'Rx' if msg.direction else 'Tx'},{msg.channel},{msg.dlc},{' '.join(f'{byte:02X}' for byte in msg.data)}")  # Логируем сообщение в формате CSV
+            logger.info(f"{msg.timestamp},{msg.arbitration_id:X},{msg.is_extended_id},{msg.is_remote_frame},{'Rx'},{msg.channel},{msg.dlc},{' '.join(f'{byte:02X}' for byte in msg.data)}")  # Логируем сообщение в формате CSV
             current_log_size += len(str(msg))
 
             if current_log_size >= max_file_size * 1024 * 1024:
