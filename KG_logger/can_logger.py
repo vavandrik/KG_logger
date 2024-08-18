@@ -1,24 +1,15 @@
-from datetime import datetime
-
+import argparse
+import os
 import can
 import logging
 from pathlib import Path
-import typer
+from datetime import datetime
 import dropbox
-from dropbox.files import WriteMode
-import os
 import csv
 
-app = typer.Typer()
 
-@app.command()
-def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.g., can0"),
-                 log_dir: str = typer.Argument("./logs", help="Directory to save log files"),
-                 max_file_size: int = typer.Argument(10, help="Maximum log file size in MB"),
-                 dropbox_token: str = typer.Option(..., help="Dropbox API OAuth2 token"),
-                 dropbox_path: str = typer.Option("/", help="Dropbox path to upload files"),
-                 log_name: str = typer.Option("can_log", help='Optional base name for the log file')
-                 ):
+def log_can_data(interface, log_dir, max_file_size, dropbox_token=None, dropbox_path=None, log_name=None):
+    # Получаем текущее время для имени файла
     current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # Формируем базовое имя файла
@@ -89,5 +80,16 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
         if bus:
             bus.shutdown()
 
+
 if __name__ == "__main__":
-    app()
+    parser = argparse.ArgumentParser(description='Log CAN data to file and upload to Dropbox.')
+    parser.add_argument('interface', type=str, help='CAN interface to use, e.g., can0')
+    parser.add_argument('log_dir', type=str, help='Directory to store log files')
+    parser.add_argument('max_file_size', type=int, help='Maximum size of log file in MB before rotation')
+    parser.add_argument('--dropbox-token', type=str, help='Dropbox API token')
+    parser.add_argument('--dropbox-path', type=str, help='Path in Dropbox to upload files')
+    parser.add_argument('--log-name', type=str, help='Optional base name for the log file')
+
+    args = parser.parse_args()
+
+    log_can_data(args.interface, args.log_dir, args.max_file_size, args.dropbox_token, args.dropbox_path, args.log_name)
