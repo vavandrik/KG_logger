@@ -1,5 +1,4 @@
 from datetime import datetime
-
 import can
 import logging
 from pathlib import Path
@@ -41,8 +40,8 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
         nonlocal log_number, current_log_size, log_dir
         log_number += 1
         current_log_size = 0
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
-        log_file = Path(log_dir) / f"{log_name}_{timestamp}.log"
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        log_file = Path(log_dir) / f"{log_name}_{timestamp}.csv"
 
         # Проверяем, есть ли обработчики, прежде чем удалять
         if logger.handlers:
@@ -50,21 +49,28 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
 
         file_handler = logging.FileHandler(log_file, mode='w')
         logger.addHandler(file_handler)
+
+        # Пишем заголовок CSV файла для совместимости с SavvyCAN
+        file_handler.setFormatter(logging.Formatter('%(asctime)s,%(message)s'))
+        logger.info("Timestamp,ID,IDE,DLC,Data")
+
         return log_file
 
-    log_file = rotate_log_file()
+    log_file = rotate_log_file(log_name)
 
     try:
         bus = can.interface.Bus(channel=interface, bustype='socketcan')
 
         while True:
             msg = bus.recv()  # Получаем сообщение с CAN
-            logger.info(msg)  # Логируем сообщение
-            current_log_size += len(str(msg))
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
+            log_entry = f"{timestamp},{msg.arbitration_id:X},{msg.is_extended_id},{msg.dlc},{msg.data.hex()}"
+            logger.info(log_entry)  # Логируем сообщение
+            current_log_size += len(log_entry)
 
             if current_log_size >= max_file_size * 1024 * 1024:
                 upload_to_dropbox(log_file, dropbox_token, dropbox_path)  # Загружаем файл в Dropbox
-                log_file = rotate_log_file()  # Переход на новый файл
+                log_file = rotate_log_file(log_name)  # Переход на новый файл
 
     except (OSError, can.CanError) as e:
         logger.error(f"Error with CAN interface: {e}")
