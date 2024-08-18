@@ -88,7 +88,8 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
             else:
                 temperatures = ["Unavailable"] * 5  # По умолчанию, если не время для считывания
 
-            log_entry = f"{datetime.now().isoformat()},{msg.arbitration_id},{msg.is_extended_id},{msg.is_remote_frame},{msg.is_error_frame},{msg.channel},{msg.dlc},{msg.data},{','.join(map(str, temperatures))}"
+            data_str = ' '.join(format(byte, '02X') for byte in msg.data)
+            log_entry = f"{datetime.now().isoformat()},{hex(msg.arbitration_id)},{msg.is_extended_id},{msg.is_remote_frame},{msg.is_error_frame},{msg.channel},{msg.dlc},{data_str},{','.join(map(str, temperatures))}"
             logger.info(log_entry)
             current_log_size += len(log_entry)
 
@@ -98,6 +99,12 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
 
     except (OSError, can.CanError) as e:
         logger.error(f"Error with CAN interface: {e}")
+    except KeyboardInterrupt:
+        logger.warning("KeyboardInterrupt received, saving and uploading log file.")
+        upload_to_dropbox(log_file, dropbox_token, dropbox_path)
+    finally:
+        if logger.handlers:
+            logger.handlers[0].close()
 
 if __name__ == "__main__":
     app()
