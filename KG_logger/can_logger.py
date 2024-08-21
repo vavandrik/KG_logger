@@ -73,8 +73,9 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
         return temperatures
 
     try:
-        bus = can.interface.Bus(channel=interface, bustype='socketcan')
+        bus = can.interface.Bus(channel=interface, interface='socketcan')
         last_temp_read_time = time.time()
+        temperatures = read_temperatures()  # Initial read to prevent unbound error
 
         while True:
             msg = bus.recv()  # Получаем сообщение с CAN
