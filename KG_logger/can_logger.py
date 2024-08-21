@@ -25,7 +25,7 @@ def upload_to_dropbox(log_file, dropbox_token, dropbox_path="/"):
 
 def read_temperatures(sensors, sensor_count, interval, stop_event, temperatures):
     while not stop_event.is_set():
-        for i in range(5):
+        for i in range(6):
             try:
                 if i < sensor_count:
                     temperature = sensors[i].get_temperature()
@@ -65,18 +65,18 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
         file_handler = logging.FileHandler(log_file, mode='w')
         logger.addHandler(file_handler)
         # Добавляем заголовок CSV
-        logger.info("Timestamp,ID,Ext,RTR,Dir,Bus,Len,Data,Temperature_1,Temperature_2,Temperature_3,Temperature_4,Temperature_5")
+        logger.info("Timestamp,ID,Ext,RTR,Dir,Bus,Len,Data,Temperature_1,Temperature_2,Temperature_3,Temperature_4,Temperature_5,Temperature_6")
         return log_file
 
     log_file = rotate_log_file()
 
     sensors = W1ThermSensor.get_available_sensors()
     sensor_count = len(sensors)
-    temperatures = ["Unavailable"] * 5
+    temperatures = ["Unavailable"] * 6
     stop_event = threading.Event()
 
     # Запускаем поток для считывания данных с датчиков
-    temp_thread = threading.Thread(target=read_temperatures, args=(sensors, sensor_count, 5, stop_event, temperatures))
+    temp_thread = threading.Thread(target=read_temperatures, args=(sensors, sensor_count, 2, stop_event, temperatures))
     temp_thread.start()
 
     try:
