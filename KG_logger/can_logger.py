@@ -8,6 +8,7 @@ from dropbox.files import WriteMode
 import os
 import time
 from w1thermsensor import W1ThermSensor, SensorNotReadyError
+import threading
 
 app = typer.Typer()
 
@@ -21,6 +22,19 @@ def upload_to_dropbox(log_file, dropbox_token, dropbox_path="/"):
             logging.info(f"Uploaded {log_file} to Dropbox")
         except dropbox.exceptions.ApiError as e:
             logging.error(f"Failed to upload {log_file} to Dropbox: {e}")
+
+def read_temperatures(sensors, sensor_count, interval, stop_event, temperatures):
+    while not stop_event.is_set():
+        for i in range(5):
+            try:
+                if i < sensor_count:
+                    temperature = sensors[i].get_temperature()
+                else:
+                    temperature = "Unavailable"
+            except SensorNotReadyError:
+                temperature = "Unavailable"
+            temperatures[i] = temperature
+        time.sleep(interval)
 
 @app.command()
 def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.g., can0"),
@@ -58,33 +72,18 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
 
     sensors = W1ThermSensor.get_available_sensors()
     sensor_count = len(sensors)
+    temperatures = ["Unavailable"] * 5
+    stop_event = threading.Event()
 
-    def read_temperatures():
-        temperatures = []
-        for i in range(5):
-            try:
-                if i < sensor_count:
-                    temperature = sensors[i].get_temperature()
-                else:
-                    temperature = "Unavailable"
-            except SensorNotReadyError:
-                temperature = "Unavailable"
-            temperatures.append(temperature)
-        return temperatures
+    # Запускаем поток для считывания данных с датчиков
+    temp_thread = threading.Thread(target=read_temperatures, args=(sensors, sensor_count, 5, stop_event, temperatures))
+    temp_thread.start()
 
     try:
         bus = can.interface.Bus(channel=interface, interface='socketcan')
-        last_temp_read_time = time.time()
-        temperatures = read_temperatures()  # Initial read to prevent unbound error
 
         while True:
             msg = bus.recv()  # Получаем сообщение с CAN
-            current_time = time.time()
-
-            # Считываем температуру каждые 5 секунд
-            if current_time - last_temp_read_time >= 5:
-                temperatures = read_temperatures()
-                last_temp_read_time = current_time
 
             data_str = ' '.join(format(byte, '02X') for byte in msg.data)
             log_entry = f"{datetime.now().isoformat()},{hex(msg.arbitration_id)},{msg.is_extended_id},{msg.is_remote_frame},{msg.is_error_frame},{msg.channel},{msg.dlc},{data_str},{','.join(map(str, temperatures))}"
@@ -101,6 +100,8 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
         logger.warning("KeyboardInterrupt received, saving and uploading log file.")
         upload_to_dropbox(log_file, dropbox_token, dropbox_path)
     finally:
+        stop_event.set()  # Останавливаем поток считывания температур
+        temp_thread.join()
         if logger.handlers:
             logger.handlers[0].close()
 
