@@ -2,4 +2,5 @@ typer
 python-can
 dropbox
 w1thermsensor
-threading
+asyncio
+aiohttp
