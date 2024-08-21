@@ -9,26 +9,46 @@ import os
 import time
 from w1thermsensor import W1ThermSensor, SensorNotReadyError
 import threading
-import asyncio
-import aiohttp
+import socket
 
 app = typer.Typer()
 
 
-def upload_to_dropbox_async(log_file, dropbox_token, dropbox_path="/"):
-    def upload_file():
-        dbx = dropbox.Dropbox(dropbox_token)
-        with open(log_file, "rb") as f:
-            file_data = f.read()
-            try:
-                dbx.files_upload(file_data, dropbox_path + log_file.name, mode=WriteMode('overwrite'))
-                os.remove(log_file)  # Удаляем файл после успешной загрузки
-                logging.info(f"Uploaded {log_file} to Dropbox")
-            except dropbox.exceptions.ApiError as e:
-                logging.error(f"Failed to upload {log_file} to Dropbox: {e}")
+def is_internet_available():
+    try:
+        socket.create_connection(("8.8.8.8", 53), timeout=2)
+        return True
+    except OSError:
+        return False
 
-    upload_thread = threading.Thread(target=upload_file)
+
+def upload_to_dropbox(log_file, dropbox_token, dropbox_path="/"):
+    dbx = dropbox.Dropbox(dropbox_token)
+    with open(log_file, "rb") as f:
+        file_data = f.read()
+        try:
+            dbx.files_upload(file_data, dropbox_path + log_file.name, mode=WriteMode('overwrite'))
+            os.remove(log_file)  # Удаляем файл после успешной загрузки
+            logging.info(f"Uploaded {log_file} to Dropbox")
+        except dropbox.exceptions.ApiError as e:
+            logging.error(f"Failed to upload {log_file} to Dropbox: {e}")
+
+
+def upload_to_dropbox_async(log_dir, log_file, dropbox_token, dropbox_path="/"):
+    def upload_files():
+        # Загружаем все отложенные файлы
+        upload_pending_files(log_dir, dropbox_token, dropbox_path)
+        # Загружаем текущий файл
+        upload_to_dropbox(log_file, dropbox_token, dropbox_path)
+
+    upload_thread = threading.Thread(target=upload_files)
     upload_thread.start()
+
+
+def upload_pending_files(log_dir, dropbox_token, dropbox_path):
+    log_files = list(Path(log_dir).glob("*.csv"))
+    for log_file in log_files:
+        upload_to_dropbox(log_file, dropbox_token, dropbox_path)
 
 
 def read_temperatures(sensors, sensor_count, interval, stop_event, temperatures):
@@ -84,7 +104,6 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
     temperatures = ["Unavailable"] * 6
     stop_event = threading.Event()
 
-    # Запускаем поток для считывания данных с датчиков
     temp_thread = threading.Thread(target=read_temperatures, args=(sensors, sensor_count, 2, stop_event, temperatures))
     temp_thread.start()
 
@@ -92,7 +111,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
         bus = can.interface.Bus(channel=interface, interface='socketcan')
 
         while True:
-            msg = bus.recv()  # Получаем сообщение с CAN
+            msg = bus.recv()
 
             data_str = ' '.join(format(byte, '02X') for byte in msg.data)
             log_entry = f"{datetime.now().isoformat()},{hex(msg.arbitration_id)},{msg.is_extended_id},{msg.is_remote_frame},{msg.is_error_frame},{msg.channel},{msg.dlc},{data_str},{','.join(map(str, temperatures))}"
@@ -100,16 +119,19 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
             current_log_size += len(log_entry)
 
             if current_log_size >= max_file_size * 1024 * 1024:
-                upload_to_dropbox_async(log_file, dropbox_token, dropbox_path)
+                upload_to_dropbox_async(log_dir, log_file, dropbox_token, dropbox_path)
                 log_file = rotate_log_file()
 
     except (OSError, can.CanError) as e:
         logger.error(f"Error with CAN interface: {e}")
     except KeyboardInterrupt:
         logger.warning("KeyboardInterrupt received, saving and uploading log file.")
-        upload_to_dropbox_async(log_file, dropbox_token, dropbox_path)
+        if is_internet_available():
+            upload_pending_files(log_dir, dropbox_token, dropbox_path)
+        else:
+            logger.warning("No internet connection. Log files will remain on device.")
     finally:
-        stop_event.set()  # Останавливаем поток считывания температур
+        stop_event.set()
         temp_thread.join()
         if logger.handlers:
             logger.handlers[0].close()
