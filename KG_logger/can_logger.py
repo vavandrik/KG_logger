@@ -121,4 +121,4 @@ async def log_can_data(interface: str = typer.Argument("can0", help="CAN interfa
             logger.handlers[0].close()
 
 if __name__ == "__main__":
-    asyncio.run(app())
+    typer.run(log_can_data)
