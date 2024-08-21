@@ -51,7 +51,6 @@ async def read_temperatures(sensors, sensor_count, interval, stop_event, tempera
             temperatures[i] = temperature
         await asyncio.sleep(interval)
 
-@app.command()
 async def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.g., can0"),
                        log_dir: str = typer.Argument("./logs", help="Directory to save log files"),
                        max_file_size: int = typer.Argument(10, help="Maximum log file size in MB"),
@@ -121,4 +120,4 @@ async def log_can_data(interface: str = typer.Argument("can0", help="CAN interfa
             logger.handlers[0].close()
 
 if __name__ == "__main__":
-    typer.run(log_can_data)
+    asyncio.run(log_can_data())
