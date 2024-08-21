@@ -45,7 +45,6 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         log_file = Path(log_dir) / f"{log_name}_{timestamp}.csv"
 
-        # Проверяем, есть ли обработчики, прежде чем удалять
         if logger.handlers:
             logger.removeHandler(logger.handlers[0])
 
@@ -62,7 +61,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
 
     def read_temperatures():
         temperatures = []
-        for i in range(5):  # Предполагаем, что максимум 5 датчиков
+        for i in range(5):
             try:
                 if i < sensor_count:
                     temperature = sensors[i].get_temperature()
@@ -85,8 +84,6 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
             if current_time - last_temp_read_time >= 5:
                 temperatures = read_temperatures()
                 last_temp_read_time = current_time
-            else:
-                temperatures = ["Unavailable"] * 5  # По умолчанию, если не время для считывания
 
             data_str = ' '.join(format(byte, '02X') for byte in msg.data)
             log_entry = f"{datetime.now().isoformat()},{hex(msg.arbitration_id)},{msg.is_extended_id},{msg.is_remote_frame},{msg.is_error_frame},{msg.channel},{msg.dlc},{data_str},{','.join(map(str, temperatures))}"
@@ -94,8 +91,8 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
             current_log_size += len(log_entry)
 
             if current_log_size >= max_file_size * 1024 * 1024:
-                upload_to_dropbox(log_file, dropbox_token, dropbox_path)  # Загружаем файл в Dropbox
-                log_file = rotate_log_file()  # Переход на новый файл
+                upload_to_dropbox(log_file, dropbox_token, dropbox_path)
+                log_file = rotate_log_file()
 
     except (OSError, can.CanError) as e:
         logger.error(f"Error with CAN interface: {e}")
