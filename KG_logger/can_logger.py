@@ -4,46 +4,42 @@ import logging
 from pathlib import Path
 import typer
 import dropbox
-from dropbox.exceptions import AuthError, ApiError
 from dropbox.files import WriteMode
 import os
 import time
 from w1thermsensor import W1ThermSensor, SensorNotReadyError
 import threading
+import socket
 
 app = typer.Typer()
 
-def upload_to_dropbox_async(log_files, dropbox_token, dropbox_path="/", stop_event=None):
+
+def check_internet(host="8.8.8.8", port=53, timeout=3):
+    try:
+        socket.setdefaulttimeout(timeout)
+        socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((host, port))
+        return True
+    except socket.error:
+        return False
+
+
+def upload_to_dropbox_async(log_files, dropbox_token, dropbox_path="/"):
     def upload_files():
         dbx = dropbox.Dropbox(dropbox_token)
         for log_file in log_files:
-            if stop_event and stop_event.is_set():
-                return
             with open(log_file, "rb") as f:
                 file_data = f.read()
                 try:
                     dbx.files_upload(file_data, dropbox_path + log_file.name, mode=WriteMode('overwrite'))
                     os.remove(log_file)  # Удаляем файл после успешной загрузки
                     logging.info(f"Uploaded {log_file} to Dropbox")
-                except AuthError:
-                    logging.error("Invalid Dropbox token. Please check your token and try again.")
-                    return
-                except ApiError as e:
+                except dropbox.exceptions.ApiError as e:
                     logging.error(f"Failed to upload {log_file} to Dropbox: {e}")
-                    return  # Прекращаем попытки загрузки при ошибке
+                    break  # Прекращаем попытки при неудаче, оставляем файлы на локальной системе
 
-    threading.Thread(target=upload_files).start()
+    upload_thread = threading.Thread(target=upload_files)
+    upload_thread.start()
 
-def check_internet_connection(dropbox_token):
-    try:
-        dbx = dropbox.Dropbox(dropbox_token)
-        dbx.users_get_current_account()  # Запрос к API Dropbox для проверки соединения
-        return True
-    except AuthError:
-        logging.error("Invalid Dropbox token. Please check your token.")
-        return False
-    except Exception:
-        return False
 
 def read_temperatures(sensors, sensor_count, interval, stop_event, temperatures):
     while not stop_event.is_set():
@@ -58,6 +54,7 @@ def read_temperatures(sensors, sensor_count, interval, stop_event, temperatures)
             temperatures[i] = temperature
         time.sleep(interval)
 
+
 @app.command()
 def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.g., can0"),
                  log_dir: str = typer.Argument("./logs", help="Directory to save log files"),
@@ -66,17 +63,13 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
                  dropbox_path: str = typer.Option("/", help="Dropbox path to upload files"),
                  log_name: str = typer.Option("can_log", help='Optional base name for the log file')
                  ):
-
-    if not check_internet_connection(dropbox_token):
-        logging.error("Failed to verify Dropbox token. Exiting...")
-        return
-
     Path(log_dir).mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=logging.DEBUG)
     logger = logging.getLogger('CAN_Logger')
 
     log_number = 0
     log_start_time = datetime.now()
+    pending_uploads = []
 
     def rotate_log_file():
         nonlocal log_number, log_start_time, log_dir
@@ -90,7 +83,8 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
 
         file_handler = logging.FileHandler(log_file, mode='w')
         logger.addHandler(file_handler)
-        logger.info("Timestamp,ID,Ext,RTR,Dir,Bus,Len,Data,Temperature_1,Temperature_2,Temperature_3,Temperature_4,Temperature_5,Temperature_6")
+        logger.info(
+            "Timestamp,ID,Ext,RTR,Dir,Bus,Len,Data,Temperature_1,Temperature_2,Temperature_3,Temperature_4,Temperature_5,Temperature_6")
         return log_file
 
     log_file = rotate_log_file()
@@ -113,25 +107,29 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
             log_entry = f"{datetime.now().isoformat()},{hex(msg.arbitration_id)},{msg.is_extended_id},{msg.is_remote_frame},{msg.is_error_frame},{msg.channel},{msg.dlc},{data_str},{','.join(map(str, temperatures))}"
             logger.info(log_entry)
 
+            # Проверяем, прошло ли заданное время для смены файла
             if datetime.now() - log_start_time >= timedelta(minutes=log_duration):
+                pending_uploads.append(log_file)
                 log_file = rotate_log_file()
 
-            if check_internet_connection(dropbox_token):
-                log_files = list(Path(log_dir).glob(f"{log_name}_*.csv"))
-                upload_to_dropbox_async(log_files, dropbox_token, dropbox_path, stop_event)
+            # Пытаемся загрузить файлы, если есть интернет
+            if pending_uploads and check_internet():
+                upload_to_dropbox_async(pending_uploads, dropbox_token, dropbox_path)
+                pending_uploads.clear()
 
     except (OSError, can.CanError) as e:
         logger.error(f"Error with CAN interface: {e}")
     except KeyboardInterrupt:
-        logger.warning("KeyboardInterrupt received, saving and uploading log files.")
+        logger.warning("KeyboardInterrupt received, saving and uploading log file.")
+        pending_uploads.append(log_file)
+        if check_internet():
+            upload_to_dropbox_async(pending_uploads, dropbox_token, dropbox_path)
+    finally:
         stop_event.set()  # Останавливаем поток считывания температур
         temp_thread.join()
-
-        log_files = list(Path(log_dir).glob(f"{log_name}_*.csv"))
-        upload_to_dropbox_async(log_files, dropbox_token, dropbox_path, stop_event)
-    finally:
         if logger.handlers:
             logger.handlers[0].close()
+
 
 if __name__ == "__main__":
     app()
