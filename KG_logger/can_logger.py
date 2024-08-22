@@ -35,7 +35,8 @@ def upload_to_dropbox_async(log_files, dropbox_token, dropbox_path="/"):
                     logging.info(f"Uploaded {log_file} to Dropbox")
                 except dropbox.exceptions.ApiError as e:
                     logging.error(f"Failed to upload {log_file} to Dropbox: {e}")
-                    break  # Прекращаем попытки при неудаче, оставляем файлы на локальной системе
+                    return  # Прекращаем загрузку при неудаче, чтобы попробовать позже
+        log_files.clear()  # Очищаем очередь после успешной загрузки всех файлов
 
     upload_thread = threading.Thread(target=upload_files)
     upload_thread.start()
@@ -112,10 +113,9 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
                 pending_uploads.append(log_file)
                 log_file = rotate_log_file()
 
-            # Пытаемся загрузить файлы, если есть интернет
+            # Пытаемся загрузить все файлы в очереди, если есть интернет
             if pending_uploads and check_internet():
-                upload_to_dropbox_async(pending_uploads, dropbox_token, dropbox_path)
-                pending_uploads.clear()
+                upload_to_dropbox_async(pending_uploads.copy(), dropbox_token, dropbox_path)
 
     except (OSError, can.CanError) as e:
         logger.error(f"Error with CAN interface: {e}")
@@ -123,7 +123,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
         logger.warning("KeyboardInterrupt received, saving and uploading log file.")
         pending_uploads.append(log_file)
         if check_internet():
-            upload_to_dropbox_async(pending_uploads, dropbox_token, dropbox_path)
+            upload_to_dropbox_async(pending_uploads.copy(), dropbox_token, dropbox_path)
     finally:
         stop_event.set()  # Останавливаем поток считывания температур
         temp_thread.join()
