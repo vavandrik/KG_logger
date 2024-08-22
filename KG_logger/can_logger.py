@@ -9,10 +9,12 @@ import os
 import time
 from w1thermsensor import W1ThermSensor, SensorNotReadyError
 import threading
+import asyncio
+import aiohttp
+import aiofiles
 import socket
 
 app = typer.Typer()
-
 
 def check_internet(host="8.8.8.8", port=53, timeout=3):
     try:
@@ -22,25 +24,28 @@ def check_internet(host="8.8.8.8", port=53, timeout=3):
     except socket.error:
         return False
 
-
-def upload_to_dropbox_async(log_files, dropbox_token, dropbox_path="/"):
-    def upload_files():
+async def upload_to_dropbox_async(log_files, dropbox_token, dropbox_path="/"):
+    async with aiohttp.ClientSession() as session:
         dbx = dropbox.Dropbox(dropbox_token)
         for log_file in log_files:
-            with open(log_file, "rb") as f:
-                file_data = f.read()
+            async with aiofiles.open(log_file, "rb") as f:
+                file_data = await f.read()
                 try:
-                    dbx.files_upload(file_data, dropbox_path + log_file.name, mode=WriteMode('overwrite'))
+                    await session.post(
+                        'https://content.dropboxapi.com/2/files/upload',
+                        headers={
+                            "Authorization": f"Bearer {dropbox_token}",
+                            "Dropbox-API-Arg": str({"path": dropbox_path + log_file.name, "mode": "overwrite"}),
+                            "Content-Type": "application/octet-stream",
+                        },
+                        data=file_data,
+                    )
                     os.remove(log_file)  # Удаляем файл после успешной загрузки
                     logging.info(f"Uploaded {log_file} to Dropbox")
-                except dropbox.exceptions.ApiError as e:
+                except Exception as e:
                     logging.error(f"Failed to upload {log_file} to Dropbox: {e}")
                     return  # Прекращаем загрузку при неудаче, чтобы попробовать позже
         log_files.clear()  # Очищаем очередь после успешной загрузки всех файлов
-
-    upload_thread = threading.Thread(target=upload_files)
-    upload_thread.start()
-
 
 def read_temperatures(sensors, sensor_count, interval, stop_event, temperatures):
     while not stop_event.is_set():
@@ -55,7 +60,6 @@ def read_temperatures(sensors, sensor_count, interval, stop_event, temperatures)
             temperatures[i] = temperature
         time.sleep(interval)
 
-
 @app.command()
 def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.g., can0"),
                  log_dir: str = typer.Argument("./logs", help="Directory to save log files"),
@@ -64,6 +68,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
                  dropbox_path: str = typer.Option("/", help="Dropbox path to upload files"),
                  log_name: str = typer.Option("can_log", help='Optional base name for the log file')
                  ):
+
     Path(log_dir).mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=logging.DEBUG)
     logger = logging.getLogger('CAN_Logger')
@@ -84,8 +89,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
 
         file_handler = logging.FileHandler(log_file, mode='w')
         logger.addHandler(file_handler)
-        logger.info(
-            "Timestamp,ID,Ext,RTR,Dir,Bus,Len,Data,Temperature_1,Temperature_2,Temperature_3,Temperature_4,Temperature_5,Temperature_6")
+        logger.info("Timestamp,ID,Ext,RTR,Dir,Bus,Len,Data,Temperature_1,Temperature_2,Temperature_3,Temperature_4,Temperature_5,Temperature_6")
         return log_file
 
     log_file = rotate_log_file()
@@ -98,38 +102,38 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
     temp_thread = threading.Thread(target=read_temperatures, args=(sensors, sensor_count, 2, stop_event, temperatures))
     temp_thread.start()
 
-    try:
-        bus = can.interface.Bus(channel=interface, interface='socketcan')
+    async def main():
+        try:
+            bus = can.interface.Bus(channel=interface, interface='socketcan')
 
-        while True:
-            msg = bus.recv()  # Получаем сообщение с CAN
+            while True:
+                msg = bus.recv()  # Получаем сообщение с CAN
 
-            data_str = ' '.join(format(byte, '02X') for byte in msg.data)
-            log_entry = f"{datetime.now().isoformat()},{hex(msg.arbitration_id)},{msg.is_extended_id},{msg.is_remote_frame},{msg.is_error_frame},{msg.channel},{msg.dlc},{data_str},{','.join(map(str, temperatures))}"
-            logger.info(log_entry)
+                data_str = ' '.join(format(byte, '02X') for byte in msg.data)
+                log_entry = f"{datetime.now().isoformat()},{hex(msg.arbitration_id)},{msg.is_extended_id},{msg.is_remote_frame},{msg.is_error_frame},{msg.channel},{msg.dlc},{data_str},{','.join(map(str, temperatures))}"
+                logger.info(log_entry)
 
-            # Проверяем, прошло ли заданное время для смены файла
-            if datetime.now() - log_start_time >= timedelta(seconds=log_duration):
-                pending_uploads.append(log_file)
-                log_file = rotate_log_file()
+                if datetime.now() - log_start_time >= timedelta(minutes=log_duration):
+                    pending_uploads.append(log_file)
+                    log_file = rotate_log_file()
 
-            # Пытаемся загрузить все файлы в очереди, если есть интернет
-            if pending_uploads and check_internet():
-                upload_to_dropbox_async(pending_uploads.copy(), dropbox_token, dropbox_path)
+                if pending_uploads and check_internet():
+                    await upload_to_dropbox_async(pending_uploads.copy(), dropbox_token, dropbox_path)
 
-    except (OSError, can.CanError) as e:
-        logger.error(f"Error with CAN interface: {e}")
-    except KeyboardInterrupt:
-        logger.warning("KeyboardInterrupt received, saving and uploading log file.")
-        pending_uploads.append(log_file)
-        if check_internet():
-            upload_to_dropbox_async(pending_uploads.copy(), dropbox_token, dropbox_path)
-    finally:
-        stop_event.set()  # Останавливаем поток считывания температур
-        temp_thread.join()
-        if logger.handlers:
-            logger.handlers[0].close()
+        except (OSError, can.CanError) as e:
+            logger.error(f"Error with CAN interface: {e}")
+        except KeyboardInterrupt:
+            logger.warning("KeyboardInterrupt received, saving and uploading log file.")
+            pending_uploads.append(log_file)
+            if check_internet():
+                await upload_to_dropbox_async(pending_uploads.copy(), dropbox_token, dropbox_path)
+        finally:
+            stop_event.set()  # Останавливаем поток считывания температур
+            temp_thread.join()
+            if logger.handlers:
+                logger.handlers[0].close()
 
+    asyncio.run(main())
 
 if __name__ == "__main__":
     app()
