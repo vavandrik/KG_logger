@@ -1,4 +1,3 @@
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 import can
 import logging
@@ -39,15 +38,6 @@ def upload_to_dropbox_async(log_file, dropbox_token, dropbox_path="/"):
     upload_thread.start()
 
 
-def upload_pending_files(log_dir, dropbox_token, dropbox_path):
-    log_files = sorted(Path(log_dir).glob("*.csv"))
-    with ThreadPoolExecutor(max_workers=5) as executor:  # Используем пул потоков для параллельной загрузки
-        futures = [executor.submit(upload_to_dropbox_async, log_file, dropbox_token, dropbox_path) for log_file in
-                   log_files]
-        for future in futures:
-            future.result()  # Ждем завершения всех загрузок
-
-
 def read_temperatures(sensors, sensor_count, interval, stop_event, temperatures):
     while not stop_event.is_set():
         for i in range(6):
@@ -62,6 +52,12 @@ def read_temperatures(sensors, sensor_count, interval, stop_event, temperatures)
         time.sleep(interval)
 
 
+def upload_pending_files(log_dir, dropbox_token, dropbox_path):
+    log_files = sorted(Path(log_dir).glob("*.csv"))
+    for log_file in log_files:
+        upload_to_dropbox_async(log_file, dropbox_token, dropbox_path)
+
+
 @app.command()
 def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.g., can0"),
                  log_dir: str = typer.Argument("./logs", help="Directory to save log files"),
@@ -69,7 +65,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
                  dropbox_token: str = typer.Option(..., help="Dropbox API OAuth2 token"),
                  dropbox_path: str = typer.Option("/", help="Dropbox path to upload files"),
                  log_name: str = typer.Option("can_log", help='Optional base name for the log file'),
-                 check_interval: int = typer.Option(60, help='Interval for checking internet connection in seconds')
+                 check_interval: int = typer.Option(30, help='Interval for checking internet connection in seconds')
                  ):
     Path(log_dir).mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=logging.DEBUG)
@@ -78,7 +74,6 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
     log_number = 0
     log_start_time = datetime.now()
     stop_event = threading.Event()
-    pending_uploads = []  # Список для хранения файлов, которые нужно загрузить
 
     def rotate_log_file():
         nonlocal log_number, log_start_time, log_dir
@@ -110,10 +105,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
     def internet_check_loop():
         while not stop_event.is_set():
             if check_internet():
-                # Загружаем все файлы из списка `pending_uploads`
-                while pending_uploads:
-                    file_to_upload = pending_uploads.pop(0)
-                    upload_to_dropbox_async(file_to_upload, dropbox_token, dropbox_path)
+                upload_pending_files(log_dir, dropbox_token, dropbox_path)
             time.sleep(check_interval)
 
     internet_thread = threading.Thread(target=internet_check_loop)
@@ -129,19 +121,14 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
             log_entry = f"{datetime.now().isoformat()},{hex(msg.arbitration_id)},{msg.is_extended_id},{msg.is_remote_frame},{msg.is_error_frame},{msg.channel},{msg.dlc},{data_str},{','.join(map(str, temperatures))}"
             logger.info(log_entry)
 
-            # Если прошло заданное количество времени, ротируем лог
             if datetime.now() - log_start_time >= timedelta(seconds=log_duration):
-                pending_uploads.append(log_file)  # Добавляем старый файл в список для загрузки
                 log_file = rotate_log_file()
 
     except (OSError, can.CanError) as e:
         logger.error(f"Error with CAN interface: {e}")
     except KeyboardInterrupt:
         logger.warning("KeyboardInterrupt received, saving and uploading log file.")
-        pending_uploads.append(log_file)
-        while pending_uploads:
-            file_to_upload = pending_uploads.pop(0)
-            upload_to_dropbox_async(file_to_upload, dropbox_token, dropbox_path)
+        upload_pending_files(log_dir, dropbox_token, dropbox_path)
     finally:
         stop_event.set()  # Останавливаем потоки
         temp_thread.join()
