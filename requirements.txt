@@ -1,6 +1,9 @@
-typer
-python-can
-dropbox
-w1thermsensor
-asyncio
-aiohttp
+typer==0.6.1
+python-can==4.2.0
+dropbox==11.35.0
+w1thermsensor==2.0.0
+google-auth==2.23.0
+google-auth-oauthlib==1.0.0
+google-auth-httplib2==0.1.0
+google-api-python-client==2.93.0
+requests==2.31.0
