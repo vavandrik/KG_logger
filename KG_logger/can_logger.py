@@ -24,28 +24,25 @@ def check_internet(host="8.8.8.8", port=53, timeout=3):
     except socket.error:
         return False
 
-async def upload_to_dropbox_async(log_files, dropbox_token, dropbox_path="/"):
+async def upload_to_dropbox_async(log_file, dropbox_token, dropbox_path="/"):
     async with aiohttp.ClientSession() as session:
         dbx = dropbox.Dropbox(dropbox_token)
-        for log_file in log_files:
+        try:
             async with aiofiles.open(log_file, "rb") as f:
                 file_data = await f.read()
-                try:
-                    await session.post(
-                        'https://content.dropboxapi.com/2/files/upload',
-                        headers={
-                            "Authorization": f"Bearer {dropbox_token}",
-                            "Dropbox-API-Arg": str({"path": dropbox_path + log_file.name, "mode": "overwrite"}),
-                            "Content-Type": "application/octet-stream",
-                        },
-                        data=file_data,
-                    )
-                    os.remove(log_file)  # Удаляем файл после успешной загрузки
-                    logging.info(f"Uploaded {log_file} to Dropbox")
-                except Exception as e:
-                    logging.error(f"Failed to upload {log_file} to Dropbox: {e}")
-                    return  # Прекращаем загрузку при неудаче, чтобы попробовать позже
-        log_files.clear()  # Очищаем очередь после успешной загрузки всех файлов
+                await session.post(
+                    'https://content.dropboxapi.com/2/files/upload',
+                    headers={
+                        "Authorization": f"Bearer {dropbox_token}",
+                        "Dropbox-API-Arg": str({"path": dropbox_path + log_file.name, "mode": "overwrite"}),
+                        "Content-Type": "application/octet-stream",
+                    },
+                    data=file_data,
+                )
+                os.remove(log_file)  # Удаляем файл после успешной загрузки
+                logging.info(f"Uploaded {log_file} to Dropbox")
+        except Exception as e:
+            logging.error(f"Failed to upload {log_file} to Dropbox: {e}")
 
 def read_temperatures(sensors, sensor_count, interval, stop_event, temperatures):
     while not stop_event.is_set():
@@ -118,7 +115,9 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
                     log_file = rotate_log_file()
 
                 if pending_uploads and check_internet():
-                    await upload_to_dropbox_async(pending_uploads.copy(), dropbox_token, dropbox_path)
+                    while pending_uploads:  # Загружаем все файлы, если интернет доступен
+                        file_to_upload = pending_uploads.pop(0)
+                        await upload_to_dropbox_async(file_to_upload, dropbox_token, dropbox_path)
 
         except (OSError, can.CanError) as e:
             logger.error(f"Error with CAN interface: {e}")
@@ -126,7 +125,9 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
             logger.warning("KeyboardInterrupt received, saving and uploading log file.")
             pending_uploads.append(log_file)
             if check_internet():
-                await upload_to_dropbox_async(pending_uploads.copy(), dropbox_token, dropbox_path)
+                while pending_uploads:
+                    file_to_upload = pending_uploads.pop(0)
+                    await upload_to_dropbox_async(file_to_upload, dropbox_token, dropbox_path)
         finally:
             stop_event.set()  # Останавливаем поток считывания температур
             temp_thread.join()
