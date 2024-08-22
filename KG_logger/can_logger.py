@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 import can
 import logging
@@ -38,6 +39,15 @@ def upload_to_dropbox_async(log_file, dropbox_token, dropbox_path="/"):
     upload_thread.start()
 
 
+def upload_pending_files(log_dir, dropbox_token, dropbox_path):
+    log_files = sorted(Path(log_dir).glob("*.csv"))
+    with ThreadPoolExecutor(max_workers=5) as executor:  # Используем пул потоков для параллельной загрузки
+        futures = [executor.submit(upload_to_dropbox_async, log_file, dropbox_token, dropbox_path) for log_file in
+                   log_files]
+        for future in futures:
+            future.result()  # Ждем завершения всех загрузок
+
+
 def read_temperatures(sensors, sensor_count, interval, stop_event, temperatures):
     while not stop_event.is_set():
         for i in range(6):
@@ -50,12 +60,6 @@ def read_temperatures(sensors, sensor_count, interval, stop_event, temperatures)
                 temperature = "Unavailable"
             temperatures[i] = temperature
         time.sleep(interval)
-
-
-def upload_pending_files(log_dir, dropbox_token, dropbox_path):
-    log_files = sorted(Path(log_dir).glob("*.csv"))
-    for log_file in log_files:
-        upload_to_dropbox_async(log_file, dropbox_token, dropbox_path)
 
 
 @app.command()
@@ -126,7 +130,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
             logger.info(log_entry)
 
             # Если прошло заданное количество времени, ротируем лог
-            if datetime.now() - log_start_time >= timedelta(seconds=log_duration):
+            if datetime.now() - log_start_time >= timedelta(minutes=log_duration):
                 pending_uploads.append(log_file)  # Добавляем старый файл в список для загрузки
                 log_file = rotate_log_file()
 
