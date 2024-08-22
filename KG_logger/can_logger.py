@@ -113,7 +113,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
                 log_entry = f"{datetime.now().isoformat()},{hex(msg.arbitration_id)},{msg.is_extended_id},{msg.is_remote_frame},{msg.is_error_frame},{msg.channel},{msg.dlc},{data_str},{','.join(map(str, temperatures))}"
                 logger.info(log_entry)
 
-                if datetime.now() - log_start_time >= timedelta(minutes=log_duration):
+                if datetime.now() - log_start_time >= timedelta(seconds=log_duration):
                     pending_uploads.append(log_file)
                     log_file = rotate_log_file()
 
