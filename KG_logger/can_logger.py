@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 import typer
 import dropbox
+from dropbox.exceptions import AuthError, ApiError
 from dropbox.files import WriteMode
 import os
 import time
@@ -24,17 +25,24 @@ def upload_to_dropbox_async(log_files, dropbox_token, dropbox_path="/", stop_eve
                     dbx.files_upload(file_data, dropbox_path + log_file.name, mode=WriteMode('overwrite'))
                     os.remove(log_file)  # Удаляем файл после успешной загрузки
                     logging.info(f"Uploaded {log_file} to Dropbox")
-                except dropbox.exceptions.ApiError as e:
+                except AuthError:
+                    logging.error("Invalid Dropbox token. Please check your token and try again.")
+                    return
+                except ApiError as e:
                     logging.error(f"Failed to upload {log_file} to Dropbox: {e}")
                     return  # Прекращаем попытки загрузки при ошибке
+
     threading.Thread(target=upload_files).start()
 
-def check_internet_connection():
+def check_internet_connection(dropbox_token):
     try:
-        dbx = dropbox.Dropbox("fake_token")  # Проверка без токена
+        dbx = dropbox.Dropbox(dropbox_token)
         dbx.users_get_current_account()  # Запрос к API Dropbox для проверки соединения
         return True
-    except:
+    except AuthError:
+        logging.error("Invalid Dropbox token. Please check your token.")
+        return False
+    except Exception:
         return False
 
 def read_temperatures(sensors, sensor_count, interval, stop_event, temperatures):
@@ -58,6 +66,10 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
                  dropbox_path: str = typer.Option("/", help="Dropbox path to upload files"),
                  log_name: str = typer.Option("can_log", help='Optional base name for the log file')
                  ):
+
+    if not check_internet_connection(dropbox_token):
+        logging.error("Failed to verify Dropbox token. Exiting...")
+        return
 
     Path(log_dir).mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=logging.DEBUG)
@@ -101,10 +113,10 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
             log_entry = f"{datetime.now().isoformat()},{hex(msg.arbitration_id)},{msg.is_extended_id},{msg.is_remote_frame},{msg.is_error_frame},{msg.channel},{msg.dlc},{data_str},{','.join(map(str, temperatures))}"
             logger.info(log_entry)
 
-            if datetime.now() - log_start_time >= timedelta(seconds=log_duration):
+            if datetime.now() - log_start_time >= timedelta(minutes=log_duration):
                 log_file = rotate_log_file()
 
-            if check_internet_connection():
+            if check_internet_connection(dropbox_token):
                 log_files = list(Path(log_dir).glob(f"{log_name}_*.csv"))
                 upload_to_dropbox_async(log_files, dropbox_token, dropbox_path, stop_event)
 
