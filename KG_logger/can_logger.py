@@ -108,7 +108,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
             logger.info(log_entry)
 
             # Проверяем, прошло ли заданное время для смены файла
-            if datetime.now() - log_start_time >= timedelta(minutes=log_duration):
+            if datetime.now() - log_start_time >= timedelta(seconds=log_duration):
                 pending_uploads.append(log_file)
                 log_file = rotate_log_file()
 
