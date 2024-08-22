@@ -56,7 +56,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
                  log_duration: int = typer.Argument(10, help="Log duration in minutes"),
                  folder_id: str = typer.Option(None, help="Google Drive folder ID to upload files"),
                  log_name: str = typer.Option("can_log", help='Optional base name for the log file'),
-                 check_interval: int = typer.Option(60, help='Interval for checking internet connection in seconds')
+                 check_interval: int = typer.Option(30, help='Interval for checking internet connection in seconds')
                  ):
 
     # Аутентификация с использованием сервисного аккаунта
@@ -122,7 +122,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
             logger.info(log_entry)
 
             # Если прошло заданное количество времени, ротируем лог
-            if datetime.now() - log_start_time >= timedelta(minutes=log_duration):
+            if datetime.now() - log_start_time >= timedelta(seconds=log_duration):
                 pending_uploads.append(log_file)  # Добавляем старый файл в список для загрузки
                 log_file = rotate_log_file()
 
