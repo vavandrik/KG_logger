@@ -46,7 +46,7 @@ def read_temperatures(sensors, sensor_count, interval, stop_event, temperatures)
 @app.command()
 def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.g., can0"),
                  log_dir: str = typer.Argument("./logs", help="Directory to save log files"),
-                 log_duration: int = typer.Argument(10, help="Log duration in minutes"),
+                 log_duration: int = typer.Argument(10, help="Log duration in seconds"),
                  dropbox_token: str = typer.Option(..., help="Dropbox API OAuth2 token"),
                  dropbox_path: str = typer.Option("/", help="Dropbox path to upload files"),
                  log_name: str = typer.Option("can_log", help='Optional base name for the log file')
@@ -97,7 +97,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
             logger.info(log_entry)
 
             # Проверяем, прошло ли заданное время для смены файла
-            if datetime.now() - log_start_time >= timedelta(minutes=log_duration):
+            if datetime.now() - log_start_time >= timedelta(seconds=log_duration):
                 upload_to_dropbox_async(log_file, dropbox_token, dropbox_path)
                 log_file = rotate_log_file()
 
