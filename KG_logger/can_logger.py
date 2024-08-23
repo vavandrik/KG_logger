@@ -18,6 +18,8 @@ SERVICE_ACCOUNT_FILE = '/home/logger/KG_logger/bamboo-reason-433311-m0-2f856dd03
 FOLDER_ID = '1XV515xYP53G1e2EvSIF4Ec8tfusvlRlU'
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
+timezone = pytz.timezone('Europe/Moscow')
+
 # Аутентификация с использованием сервисного аккаунта
 creds = service_account.Credentials.from_service_account_file(
     SERVICE_ACCOUNT_FILE, scopes=SCOPES)
@@ -85,14 +87,14 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
     logger = logging.getLogger('CAN_Logger')
 
     log_number = 0
-    log_start_time = datetime.now()
+    log_start_time = datetime.now(timezone)
     stop_event = threading.Event()
     pending_uploads = []  # Список для хранения файлов, которые нужно загрузить
 
     def rotate_log_file():
         nonlocal log_number, log_start_time, log_dir
         log_number += 1
-        log_start_time = datetime.now()
+        log_start_time = datetime.now(timezone)
         timestamp = log_start_time.strftime("%Y-%m-%d_%H-%M-%S")
         log_file = Path(log_dir) / f"{log_name}_{timestamp}.csv"
 
@@ -134,11 +136,11 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
             msg = bus.recv()  # Получаем сообщение с CAN
 
             data_str = ' '.join(format(byte, '02X') for byte in msg.data)
-            log_entry = f"{datetime.now().isoformat()},{hex(msg.arbitration_id)},{msg.is_extended_id},{msg.is_remote_frame},{msg.is_error_frame},{msg.channel},{msg.dlc},{data_str},{','.join(map(str, temperatures))}"
+            log_entry = f"{datetime.now(timezone).isoformat()},{hex(msg.arbitration_id)},{msg.is_extended_id},{msg.is_remote_frame},{msg.is_error_frame},{msg.channel},{msg.dlc},{data_str},{','.join(map(str, temperatures))}"
             logger.info(log_entry)
 
             # Если прошло заданное количество времени, ротируем лог
-            if datetime.now() - log_start_time >= timedelta(seconds=log_duration):
+            if datetime.now(timezone) - log_start_time >= timedelta(seconds=log_duration):
                 pending_uploads.append(log_file)  # Добавляем старый файл в список для загрузки
                 log_file = rotate_log_file()
 
