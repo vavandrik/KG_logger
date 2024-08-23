@@ -1,15 +1,29 @@
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 import can
 import logging
 from pathlib import Path
 import typer
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
 import os
 import time
 from w1thermsensor import W1ThermSensor, SensorNotReadyError
 import threading
 import requests
+
+# Параметры для Google Drive API
+SERVICE_ACCOUNT_FILE = '/home/logger/KG_logger/bamboo-reason-433311-m0-2f856dd03538.json'
+FOLDER_ID = '1XV515xYP53G1e2EvSIF4Ec8tfusvlRlU'
+SCOPES = ['https://www.googleapis.com/auth/drive']
+
+# Аутентификация с использованием сервисного аккаунта
+creds = service_account.Credentials.from_service_account_file(
+    SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+
+# Создание клиента Google Drive API
+service = build('drive', 'v3', credentials=creds)
 
 app = typer.Typer()
 
@@ -20,20 +34,28 @@ def check_internet(url="https://www.google.com", timeout=5):
     except (requests.ConnectionError, requests.Timeout):
         return False
 
-def upload_to_gdrive(service, file_path, folder_id=None):
+def upload_file_to_gdrive(file_path, folder_id, mime_type='text/csv'):
+    file_name = Path(file_path).name
     file_metadata = {
-        'name': file_path.name,
-        'parents': [folder_id] if folder_id else []
+        'name': file_name,
+        'parents': [folder_id]
     }
-    media = MediaFileUpload(file_path, mimetype='text/csv')
-    service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-    os.remove(file_path)  # Удаляем файл после успешной загрузки
-    logging.info(f"Uploaded {file_path} to Google Drive")
+    media = MediaFileUpload(file_path, mimetype=mime_type)
+    try:
+        file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id'
+        ).execute()
+        os.remove(file_path)  # Удаляем файл после успешной загрузки
+        logging.info(f"File ID: {file.get('id')} uploaded to folder ID: {folder_id}.")
+    except Exception as e:
+        logging.error(f"Failed to upload {file_path} to Google Drive: {e}")
 
-def upload_pending_files(service, log_dir, folder_id):
+def upload_pending_files(log_dir):
     log_files = sorted(Path(log_dir).glob("*.csv"))
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        futures = [executor.submit(upload_to_gdrive, service, log_file, folder_id) for log_file in log_files]
+    with ThreadPoolExecutor(max_workers=5) as executor:  # Используем пул потоков для параллельной загрузки
+        futures = [executor.submit(upload_file_to_gdrive, log_file, FOLDER_ID) for log_file in log_files]
         for future in futures:
             future.result()  # Ждем завершения всех загрузок
 
@@ -54,15 +76,9 @@ def read_temperatures(sensors, sensor_count, interval, stop_event, temperatures)
 def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.g., can0"),
                  log_dir: str = typer.Argument("./logs", help="Directory to save log files"),
                  log_duration: int = typer.Argument(10, help="Log duration in minutes"),
-                 folder_id: str = typer.Option(None, help="Google Drive folder ID to upload files"),
                  log_name: str = typer.Option("can_log", help='Optional base name for the log file'),
-                 check_interval: int = typer.Option(30, help='Interval for checking internet connection in seconds')
+                 check_interval: int = typer.Option(60, help='Interval for checking internet connection in seconds')
                  ):
-
-    # Аутентификация с использованием сервисного аккаунта
-    credentials_file = 'bamboo-reason-433311-m0-2f856dd03538.json'
-    credentials = service_account.Credentials.from_service_account_file(credentials_file)
-    service = build('drive', 'v3', credentials=credentials)
 
     Path(log_dir).mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=logging.DEBUG)
@@ -105,7 +121,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
                 # Загружаем все файлы из списка `pending_uploads`
                 while pending_uploads:
                     file_to_upload = pending_uploads.pop(0)
-                    upload_to_gdrive(service, file_to_upload, folder_id)
+                    upload_file_to_gdrive(file_to_upload, FOLDER_ID)
             time.sleep(check_interval)
 
     internet_thread = threading.Thread(target=internet_check_loop)
@@ -133,7 +149,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
         pending_uploads.append(log_file)
         while pending_uploads:
             file_to_upload = pending_uploads.pop(0)
-            upload_to_gdrive(service, file_to_upload, folder_id)
+            upload_file_to_gdrive(file_to_upload, FOLDER_ID)
     finally:
         stop_event.set()  # Останавливаем потоки
         temp_thread.join()
