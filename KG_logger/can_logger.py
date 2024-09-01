@@ -31,6 +31,10 @@ service = build('drive', 'v3', credentials=creds)
 
 app = typer.Typer()
 
+# Настройка GPIO для отслеживания состояния питания
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(18, GPIO.IN)  # GPIO 18 настроен на вход для проверки напряжения
+
 def check_internet(url="https://www.google.com", timeout=5):
     try:
         requests.get(url, timeout=timeout)
@@ -58,7 +62,7 @@ def upload_file_to_gdrive(file_path, folder_id, mime_type='text/csv'):
 
 def upload_pending_files(log_dir):
     log_files = sorted(Path(log_dir).glob("*.csv"))
-    with ThreadPoolExecutor(max_workers=5) as executor:
+    with ThreadPoolExecutor(max_workers=5) as executor:  # Используем пул потоков для параллельной загрузки
         futures = [executor.submit(upload_file_to_gdrive, log_file, FOLDER_ID) for log_file in log_files]
         for future in futures:
             future.result()  # Ждем завершения всех загрузок
@@ -76,20 +80,13 @@ def read_temperatures(sensors, sensor_count, interval, stop_event, temperatures)
             temperatures[i] = temperature
         time.sleep(interval)
 
-def check_power(pin, interval, stop_event, power_status):
-    GPIO.setmode(GPIO.BCM)
-    GPIO.setup(pin, GPIO.IN)
-    while not stop_event.is_set():
-        power_status[0] = GPIO.input(pin) == GPIO.HIGH
-        time.sleep(interval)
-
 @app.command()
 def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.g., can0"),
                  log_dir: str = typer.Argument("./logs", help="Directory to save log files"),
                  log_duration: int = typer.Argument(10, help="Log duration in minutes"),
                  log_name: str = typer.Option("can_log", help='Optional base name for the log file'),
                  check_interval: int = typer.Option(60, help='Interval for checking internet connection in seconds'),
-                 power_pin: int = typer.Option(18, help='GPIO pin number for power monitoring')
+                 shutdown_delay: int = typer.Option(300, help='Delay before shutdown if no CAN data is received in seconds')
                  ):
 
     Path(log_dir).mkdir(parents=True, exist_ok=True)
@@ -98,8 +95,10 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
 
     log_number = 0
     log_start_time = datetime.now(timezone)
+    last_can_data_time = datetime.now(timezone)
+    last_power_on_time = datetime.now(timezone)
     stop_event = threading.Event()
-    pending_uploads = []
+    pending_uploads = []  # Список для хранения файлов, которые нужно загрузить
 
     def rotate_log_file():
         nonlocal log_number, log_start_time, log_dir
@@ -121,18 +120,16 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
     sensors = W1ThermSensor.get_available_sensors()
     sensor_count = len(sensors)
     temperatures = ["Unavailable"] * 6
-    power_status = [True]
 
+    # Запускаем поток для считывания данных с датчиков
     temp_thread = threading.Thread(target=read_temperatures, args=(sensors, sensor_count, 2, stop_event, temperatures))
-    power_thread = threading.Thread(target=check_power, args=(power_pin, 1, stop_event, power_status))
     temp_thread.start()
-    power_thread.start()
 
-    last_power_time = time.time()
-
+    # Запускаем поток для проверки интернета и загрузки файлов
     def internet_check_loop():
         while not stop_event.is_set():
             if check_internet():
+                # Загружаем все файлы из списка `pending_uploads`
                 while pending_uploads:
                     file_to_upload = pending_uploads.pop(0)
                     upload_file_to_gdrive(file_to_upload, FOLDER_ID)
@@ -145,36 +142,54 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
         bus = can.interface.Bus(channel=interface, interface='socketcan')
 
         while True:
-            msg = bus.recv()
-            data_str = ' '.join(format(byte, '02X') for byte in msg.data)
-            log_entry = f"{datetime.now(timezone).isoformat()},{hex(msg.arbitration_id)},{msg.is_extended_id},{msg.is_remote_frame},{msg.is_error_frame},{msg.channel},{msg.dlc},{data_str},{','.join(map(str, temperatures))},{power_status[0]}"
+            power_state = GPIO.input(16)
+            power_status = "True" if power_state == 1 else "False"
+
+            if power_state:
+                last_power_on_time = datetime.now(timezone)
+
+            msg = bus.recv()  # Устанавливаем таймаут на 1 секунду
+
+            if msg:
+                last_can_data_time = datetime.now(timezone)
+
+                data_str = ' '.join(format(byte, '02X') for byte in msg.data)
+                log_entry = f"{datetime.now(timezone).isoformat()},{hex(msg.arbitration_id)},{msg.is_extended_id},{msg.is_remote_frame},{msg.is_error_frame},{msg.channel},{msg.dlc},{data_str},{','.join(map(str, temperatures))},{power_status}"
+            else:
+                # Если нет данных, записываем "Unavailable" в лог
+                log_entry = f"{datetime.now(timezone).isoformat()},Unavailable,Unavailable,Unavailable,Unavailable,Unavailable,Unavailable,Unavailable,{' '.join(['Unavailable']*8)},{','.join(map(str, temperatures))},{power_status}"
+
             logger.info(log_entry)
 
-            if not power_status[0]:
-                if time.time() - last_power_time >= 300:
-                    logging.warning("Power lost for 5 minutes, shutting down.")
-                    break
-            else:
-                last_power_time = time.time()
-
+            # Если прошло заданное количество времени, ротируем лог
             if datetime.now(timezone) - log_start_time >= timedelta(seconds=log_duration):
-                pending_uploads.append(log_file)
+                pending_uploads.append(log_file)  # Добавляем старый файл в список для загрузки
                 log_file = rotate_log_file()
+
+            # Если питание отсутствует больше 5 минут, завершаем работу
+            if not power_state and datetime.now(timezone) - last_power_on_time >= timedelta(seconds=shutdown_delay):
+                logger.warning("Power lost for 5 minutes. Shutting down.")
+                break
+
+            # Если не получаем данные с CAN шины в течение заданного времени
+            if datetime.now(timezone) - last_can_data_time >= timedelta(seconds=shutdown_delay):
+                logger.warning("No CAN data for 5 minutes. Shutting down.")
+                break
 
     except (OSError, can.CanError) as e:
         logger.error(f"Error with CAN interface: {e}")
     except KeyboardInterrupt:
         logger.warning("KeyboardInterrupt received, saving and uploading log file.")
+    finally:
+        stop_event.set()  # Останавливаем потоки
+        temp_thread.join()
+        internet_thread.join()
+
         pending_uploads.append(log_file)
         while pending_uploads:
             file_to_upload = pending_uploads.pop(0)
             upload_file_to_gdrive(file_to_upload, FOLDER_ID)
-    finally:
-        stop_event.set()
-        temp_thread.join()
-        power_thread.join()
-        internet_thread.join()
-        GPIO.cleanup()
+
         if logger.handlers:
             logger.handlers[0].close()
 
