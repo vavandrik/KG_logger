@@ -152,14 +152,17 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
 
             if msg:
                 last_can_data_time = datetime.now(timezone)
+            else:
+                # Если нет данных, записываем "Unavailable" в лог
+                msg = None
 
             # Если не получаем данные с CAN шины в течение заданного времени
             if datetime.now(timezone) - last_can_data_time >= timedelta(seconds=shutdown_delay):
                 logger.warning("No CAN data for 5 minutes. Shutting down.")
                 break
 
-            data_str = ' '.join(format(byte, '02X') for byte in msg.data) if msg else "No Data"
-            log_entry = f"{datetime.now(timezone).isoformat()},{hex(msg.arbitration_id) if msg else 'N/A'},{msg.is_extended_id if msg else 'N/A'},{msg.is_remote_frame if msg else 'N/A'},{msg.is_error_frame if msg else 'N/A'},{msg.channel if msg else 'N/A'},{msg.dlc if msg else 'N/A'},{data_str},{','.join(map(str, temperatures))},{power_status}"
+            data_str = ' '.join(format(byte, '02X') for byte in msg.data) if msg else "Unavailable"
+            log_entry = f"{datetime.now(timezone).isoformat()},{hex(msg.arbitration_id) if msg else 'Unavailable'},{msg.is_extended_id if msg else 'Unavailable'},{msg.is_remote_frame if msg else 'Unavailable'},{msg.is_error_frame if msg else 'Unavailable'},{msg.channel if msg else 'Unavailable'},{msg.dlc if msg else 'Unavailable'},{data_str},{','.join(map(str, temperatures))},{power_status}"
             logger.info(log_entry)
 
             # Если прошло заданное количество времени, ротируем лог
