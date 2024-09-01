@@ -95,6 +95,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
 
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(16, GPIO.IN)
+    GPIO.setup(26, GPIO.OUT)
 
     def rotate_log_file():
         nonlocal log_number, log_start_time, log_dir
@@ -143,9 +144,6 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
             if not power_state:
                 if power_lost_start is None:
                     power_lost_start = datetime.now()
-                elif datetime.now() - power_lost_start > timedelta(minutes=5):
-                    logger.warning("Power lost for more than 5 minutes, stopping.")
-                    break
             else:
                 power_lost_start = None
 
@@ -154,8 +152,8 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
                 if msg is None:
                     if can_unavailable_start is None:
                         can_unavailable_start = datetime.now()
-                    elif datetime.now() - can_unavailable_start > timedelta(minutes=5):
-                        logger.warning("CAN bus unavailable for more than 5 minutes, stopping.")
+                    elif datetime.now() - can_unavailable_start > timedelta(minutes=5) and power_lost_start and datetime.now() - power_lost_start > timedelta(minutes=5):
+                        logger.warning("Power and CAN lost for more than 5 minutes, stopping.")
                         break
                     data_str = "CAN Unavailable"
                 else:
@@ -175,15 +173,17 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
 
     except KeyboardInterrupt:
         logger.warning("KeyboardInterrupt received, saving and uploading log file.")
-    finally:
         pending_uploads.append(log_file)
         while pending_uploads:
             file_to_upload = pending_uploads.pop(0)
             upload_file_to_gdrive(file_to_upload, FOLDER_ID)
-
+    finally:
         stop_event.set()  # Stop threads
         temp_thread.join()
         internet_thread.join()
+        GPIO.output(26, GPIO.HIGH)  # Set GPIO 26 to HIGH
+        time.sleep(5)
+        GPIO.output(26, GPIO.LOW)  # Reset GPIO 26
         GPIO.cleanup()  # Clean up GPIO
         if logger.handlers:
             logger.handlers[0].close()
