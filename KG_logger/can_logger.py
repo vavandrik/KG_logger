@@ -124,7 +124,9 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
     def internet_check_loop():
         while not stop_event.is_set():
             if check_internet():
-                upload_pending_files(log_dir)
+                while pending_uploads:
+                    file_to_upload = pending_uploads.pop(0)
+                    upload_file_to_gdrive(file_to_upload, FOLDER_ID)
             time.sleep(check_interval)
 
     internet_thread = threading.Thread(target=internet_check_loop)
@@ -145,32 +147,35 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
             else:
                 power_lost_start = None
 
-            try:
-                msg = bus.recv(timeout=1.0)
-                if msg is None:
-                    if can_unavailable_start is None:
-                        can_unavailable_start = datetime.now()
-                    elif datetime.now() - can_unavailable_start > timedelta(minutes=5) and power_lost_start and datetime.now() - power_lost_start > timedelta(minutes=5):
-                        logger.warning("Power and CAN lost for more than 5 minutes, stopping.")
-                        break
-                    data_str = "CAN Unavailable"
-                else:
-                    can_unavailable_start = None
-                    data_str = ' '.join(format(byte, '02X') for byte in msg.data)
+            msg = bus.recv(timeout=0.3)
+            if msg is None:
+                if can_unavailable_start is None:
+                    can_unavailable_start = datetime.now()
+                elif datetime.now() - can_unavailable_start > timedelta(minutes=5) and power_lost_start and datetime.now() - power_lost_start > timedelta(minutes=5):
+                    logger.warning("Power and CAN lost for more than 5 minutes, stopping.")
+                    break
+                data_str = "CAN Unavailable"
+            else:
+                can_unavailable_start = None
+                data_str = ' '.join(format(byte, '02X') for byte in msg.data)
 
-                log_entry = f"{datetime.now(timezone).isoformat()},{hex(msg.arbitration_id) if msg else 'N/A'},{msg.is_extended_id if msg else 'N/A'},{msg.is_remote_frame if msg else 'N/A'},{msg.is_error_frame if msg else 'N/A'},{msg.channel if msg else 'N/A'},{msg.dlc if msg else 'N/A'},{data_str},{','.join(map(str, temperatures))},{power_state}"
-                logger.info(log_entry)
+            log_entry = f"{datetime.now(timezone).isoformat()},{hex(msg.arbitration_id) if msg else 'N/A'},{msg.is_extended_id if msg else 'N/A'},{msg.is_remote_frame if msg else 'N/A'},{msg.is_error_frame if msg else 'N/A'},{msg.channel if msg else 'N/A'},{msg.dlc if msg else 'N/A'},{data_str},{','.join(map(str, temperatures))},{power_state}"
+            logger.info(log_entry)
 
-                # Rotate log if duration is exceeded
-                if datetime.now(timezone) - log_start_time >= timedelta(minutes=log_duration):
-                    pending_uploads.append(log_file)  # Add old file to upload queue
-                    log_file = rotate_log_file()
+            # Rotate log if duration is exceeded
+            if datetime.now(timezone) - log_start_time >= timedelta(minutes=log_duration):
+                pending_uploads.append(log_file)  # Add old file to upload queue
+                log_file = rotate_log_file()
 
-            except (OSError, can.CanError) as e:
-                logger.error(f"Error with CAN interface: {e}")
+    except (OSError, can.CanError) as e:
+        logger.error(f"Error with CAN interface: {e}")
 
     except KeyboardInterrupt:
         logger.warning("KeyboardInterrupt received, saving and uploading log file.")
+        pending_uploads.append(log_file)
+        while pending_uploads:
+            file_to_upload = pending_uploads.pop(0)
+            upload_file_to_gdrive(file_to_upload, FOLDER_ID)
     finally:
         upload_pending_files(log_dir)
         stop_event.set()  # Stop threads
