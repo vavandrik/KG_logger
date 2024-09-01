@@ -148,7 +148,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
             if power_state:
                 last_power_on_time = datetime.now(timezone)
 
-            msg = bus.recv(timeout=1.0)  # Устанавливаем таймаут на 1 секунду
+            msg = bus.recv()  # Устанавливаем таймаут на 1 секунду
 
             if msg:
                 last_can_data_time = datetime.now(timezone)
