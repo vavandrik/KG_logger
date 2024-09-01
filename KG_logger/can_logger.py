@@ -81,7 +81,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
                  log_dir: str = typer.Argument("./logs", help="Directory to save log files"),
                  log_duration: int = typer.Argument(10, help="Log duration in minutes"),
                  log_name: str = typer.Option("can_log", help='Optional base name for the log file'),
-                 check_interval: int = typer.Option(120, help='Interval for checking internet connection in seconds')
+                 check_interval: int = typer.Option(60, help='Interval for checking internet connection in seconds')
                  ):
 
     Path(log_dir).mkdir(parents=True, exist_ok=True)
@@ -91,7 +91,6 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
     log_number = 0
     log_start_time = datetime.now(timezone)
     stop_event = threading.Event()
-    pending_uploads = []  # List to store files that need uploading
 
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(16, GPIO.IN)
@@ -162,7 +161,6 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
 
             # Rotate log if duration is exceeded
             if datetime.now(timezone) - log_start_time >= timedelta(minutes=log_duration):
-                pending_uploads.append(log_file)  # Add old file to upload queue
                 log_file = rotate_log_file()
 
     except (OSError, can.CanError) as e:
@@ -170,7 +168,6 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
 
     except KeyboardInterrupt:
         logger.warning("KeyboardInterrupt received, saving and uploading log file.")
-        pending_uploads.append(log_file)
     finally:
         upload_pending_files(log_dir)
         stop_event.set()  # Stop threads
