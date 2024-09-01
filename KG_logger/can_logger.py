@@ -124,9 +124,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
     def internet_check_loop():
         while not stop_event.is_set():
             if check_internet():
-                while pending_uploads:
-                    file_to_upload = pending_uploads.pop(0)
-                    upload_file_to_gdrive(file_to_upload, FOLDER_ID)
+                upload_pending_files(log_dir)
             time.sleep(check_interval)
 
     internet_thread = threading.Thread(target=internet_check_loop)
@@ -173,9 +171,6 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
     except KeyboardInterrupt:
         logger.warning("KeyboardInterrupt received, saving and uploading log file.")
         pending_uploads.append(log_file)
-        while pending_uploads:
-            file_to_upload = pending_uploads.pop(0)
-            upload_file_to_gdrive(file_to_upload, FOLDER_ID)
     finally:
         upload_pending_files(log_dir)
         stop_event.set()  # Stop threads
