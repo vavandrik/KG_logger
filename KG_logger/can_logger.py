@@ -56,10 +56,12 @@ def upload_file_to_gdrive(file_path, folder_id, mime_type='text/csv'):
     except Exception as e:
         logging.error(f"Failed to upload {file_path} to Google Drive: {e}")
 
-def upload_pending_files(log_dir):
+def upload_pending_files(log_dir, current_log_file):
     log_files = sorted(Path(log_dir).glob("*.csv"))
+    log_files_to_upload = [f for f in log_files if f != current_log_file]
+
     with ThreadPoolExecutor(max_workers=5) as executor:  # Use thread pool for parallel uploads
-        futures = [executor.submit(upload_file_to_gdrive, log_file, FOLDER_ID) for log_file in log_files]
+        futures = [executor.submit(upload_file_to_gdrive, log_file, FOLDER_ID) for log_file in log_files_to_upload]
         for future in futures:
             future.result()  # Wait for all uploads to complete
 
@@ -123,7 +125,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
     def internet_check_loop():
         while not stop_event.is_set():
             if check_internet():
-                upload_pending_files(log_dir)
+                upload_pending_files(log_dir, log_file)
             time.sleep(check_interval)
 
     internet_thread = threading.Thread(target=internet_check_loop)
@@ -169,7 +171,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
     except KeyboardInterrupt:
         logger.warning("KeyboardInterrupt received, saving and uploading log file.")
     finally:
-        upload_pending_files(log_dir)
+        upload_pending_files(log_dir, None)
         stop_event.set()  # Stop threads
         temp_thread.join()
         internet_thread.join()
@@ -179,6 +181,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
         GPIO.cleanup()  # Clean up GPIO
         if logger.handlers:
             logger.handlers[0].close()
+
 
 if __name__ == "__main__":
     app()
