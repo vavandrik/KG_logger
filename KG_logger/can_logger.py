@@ -33,7 +33,7 @@ app = typer.Typer()
 
 # Настройка GPIO для отслеживания состояния питания
 GPIO.setmode(GPIO.BCM)
-GPIO.setup(16, GPIO.IN)  # GPIO 18 настроен на вход для проверки напряжения
+GPIO.setup(18, GPIO.IN)  # GPIO 18 настроен на вход для проверки напряжения
 
 def check_internet(url="https://www.google.com", timeout=5):
     try:
@@ -96,6 +96,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
     log_number = 0
     log_start_time = datetime.now(timezone)
     last_can_data_time = datetime.now(timezone)
+    last_power_on_time = datetime.now(timezone)
     stop_event = threading.Event()
     pending_uploads = []  # Список для хранения файлов, которые нужно загрузить
 
@@ -144,6 +145,9 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
             power_state = GPIO.input(16)
             power_status = "True" if power_state == 1 else "False"
 
+            if power_state:
+                last_power_on_time = datetime.now(timezone)
+
             msg = bus.recv(timeout=1.0)  # Устанавливаем таймаут на 1 секунду
 
             if msg:
@@ -164,9 +168,8 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
                 log_file = rotate_log_file()
 
             # Если питание отсутствует больше 5 минут, завершаем работу
-            if not power_state:
-                logger.warning("Power lost. Starting shutdown sequence.")
-                time.sleep(shutdown_delay)
+            if not power_state and datetime.now(timezone) - last_power_on_time >= timedelta(seconds=shutdown_delay):
+                logger.warning("Power lost for 5 minutes. Shutting down.")
                 break
 
     except (OSError, can.CanError) as e:
