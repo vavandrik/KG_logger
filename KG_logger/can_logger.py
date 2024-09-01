@@ -89,7 +89,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
                  log_duration: int = typer.Argument(10, help="Log duration in minutes"),
                  log_name: str = typer.Option("can_log", help='Optional base name for the log file'),
                  check_interval: int = typer.Option(60, help='Interval for checking internet connection in seconds'),
-                 power_pin: int = typer.Option(18, help='GPIO pin number for power monitoring')
+                 power_pin: int = typer.Option(16, help='GPIO pin number for power monitoring')
                  ):
 
     Path(log_dir).mkdir(parents=True, exist_ok=True)
