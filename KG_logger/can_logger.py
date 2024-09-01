@@ -150,7 +150,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
             log_entry = f"{datetime.now(timezone).isoformat()},{hex(msg.arbitration_id)},{msg.is_extended_id},{msg.is_remote_frame},{msg.is_error_frame},{msg.channel},{msg.dlc},{data_str},{','.join(map(str, temperatures))},{power_status[0]}"
             logger.info(log_entry)
 
-            if not power_status[0]:
+            if power_status[0] is False:
                 if time.time() - last_power_time >= 300:
                     logging.warning("Power lost for 5 minutes, shutting down.")
                     break
