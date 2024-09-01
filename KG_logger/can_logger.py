@@ -182,7 +182,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
         temp_thread.join()
         internet_thread.join()
         GPIO.output(26, GPIO.HIGH)  # Set GPIO 26 to HIGH
-        time.sleep(5)
+        time.sleep(10)
         GPIO.output(26, GPIO.LOW)  # Reset GPIO 26
         GPIO.cleanup()  # Clean up GPIO
         if logger.handlers:
