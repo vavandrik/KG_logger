@@ -152,7 +152,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
                 if msg is None:
                     if can_unavailable_start is None:
                         can_unavailable_start = datetime.now()
-                    elif datetime.now() - can_unavailable_start > timedelta(minutes=5) and power_lost_start and datetime.now() - power_lost_start > timedelta(minutes=5):
+                    elif datetime.now() - can_unavailable_start > timedelta(seconds=30) and power_lost_start and datetime.now() - power_lost_start > timedelta(seconds=30):
                         logger.warning("Power and CAN lost for more than 5 minutes, stopping.")
                         break
                     data_str = "CAN Unavailable"
