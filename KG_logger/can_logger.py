@@ -81,7 +81,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
                  log_dir: str = typer.Argument("./logs", help="Directory to save log files"),
                  log_duration: int = typer.Argument(10, help="Log duration in minutes"),
                  log_name: str = typer.Option("can_log", help='Optional base name for the log file'),
-                 check_interval: int = typer.Option(60, help='Interval for checking internet connection in seconds')
+                 check_interval: int = typer.Option(300, help='Interval for checking internet connection in seconds')
                  ):
 
     Path(log_dir).mkdir(parents=True, exist_ok=True)
@@ -150,7 +150,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
                 if msg is None:
                     if can_unavailable_start is None:
                         can_unavailable_start = datetime.now()
-                    elif datetime.now() - can_unavailable_start > timedelta(seconds=30) and power_lost_start and datetime.now() - power_lost_start > timedelta(seconds=30):
+                    elif datetime.now() - can_unavailable_start > timedelta(minutes=5) and power_lost_start and datetime.now() - power_lost_start > timedelta(minutes=5):
                         logger.warning("Power and CAN lost for more than 5 minutes, stopping.")
                         break
                     data_str = "CAN Unavailable"
