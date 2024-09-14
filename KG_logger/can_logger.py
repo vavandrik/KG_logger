@@ -83,7 +83,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
                  log_dir: str = typer.Argument("./logs", help="Directory to save log files"),
                  log_duration: int = typer.Argument(10, help="Log duration in minutes"),
                  log_name: str = typer.Option("can_log", help='Optional base name for the log file'),
-                 check_interval: int = typer.Option(60, help='Interval for checking internet connection in seconds')
+                 check_interval: int = typer.Option(30, help='Interval for checking internet connection in seconds')
                  ):
 
     Path(log_dir).mkdir(parents=True, exist_ok=True)
