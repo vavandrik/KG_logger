@@ -10,7 +10,7 @@ from pathlib import Path
 import typer
 import os
 import time
-from w1thermsensor import W1ThermSensor, SensorNotReadyError, NoSensorFoundError
+from w1thermsensor import W1ThermSensor, SensorNotReadyError
 import threading
 import requests
 import RPi.GPIO as GPIO
@@ -66,9 +66,6 @@ def upload_pending_files(log_dir, current_log_file):
             future.result()  # Wait for all uploads to complete
 
 def read_temperatures(sensors, sensor_count, interval, stop_event, temperatures):
-    retries = 3  # Number of times to retry sensor initialization before giving up
-    retry_delay = 5  # Delay between retries
-
     while not stop_event.is_set():
         for i in range(6):
             try:
@@ -76,19 +73,8 @@ def read_temperatures(sensors, sensor_count, interval, stop_event, temperatures)
                     temperature = sensors[i].get_temperature()
                 else:
                     temperature = "Unavailable"
-            except (SensorNotReadyError, NoSensorFoundError):
-                logging.warning(f"Sensor {i} not responding. Attempting reinitialization.")
+            except SensorNotReadyError:
                 temperature = "Unavailable"
-                # Retry initialization if the sensor is unavailable
-                for _ in range(retries):
-                    try:
-                        sensors = W1ThermSensor.get_available_sensors()  # Reinitialize sensors
-                        sensor_count = len(sensors)
-                        logging.info(f"Reinitialized sensors: {sensor_count} found.")
-                        break  # Exit the retry loop once sensors are found
-                    except NoSensorFoundError:
-                        logging.error("Failed to reinitialize sensors. Retrying...")
-                        time.sleep(retry_delay)
             temperatures[i] = temperature
         time.sleep(interval)
 
@@ -177,7 +163,6 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
 
             # Rotate log if duration is exceeded
             if datetime.now(timezone) - log_start_time >= timedelta(minutes=log_duration):
-                pending_uploads.append(log_file)  # Add old file to upload queue
                 log_file = rotate_log_file()
 
     except (OSError, can.CanError) as e:
