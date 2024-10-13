@@ -10,10 +10,10 @@ from pathlib import Path
 import typer
 import os
 import time
-from w1thermsensor import W1ThermSensor, SensorNotReadyError
 import threading
 import requests
 import RPi.GPIO as GPIO
+import minimalmodbus
 
 # Google Drive API Parameters
 SERVICE_ACCOUNT_FILE = '/home/logger/KG_logger/bamboo-reason-433311-m0-2f856dd03538.json'
@@ -65,18 +65,27 @@ def upload_pending_files(log_dir, current_log_file):
         for future in futures:
             future.result()  # Wait for all uploads to complete
 
-def read_temperatures(sensors, sensor_count, interval, stop_event, temperatures):
+def read_rs485_temperatures(instrument, temp_registers, interval, stop_event, temperatures):
     while not stop_event.is_set():
-        for i in range(6):
+        for i, reg in enumerate(temp_registers):
             try:
-                if i < sensor_count:
-                    temperature = sensors[i].get_temperature()
-                else:
-                    temperature = "Unavailable"
-            except SensorNotReadyError:
-                temperature = "Unavailable"
-            temperatures[i] = temperature
+                raw_value = instrument.read_register(reg, 0, functioncode=3)
+                temperature = raw_value / 10.0  # Assuming data is in tenths of degrees
+                temperatures[i] = temperature
+            except Exception as e:
+                temperatures[i] = "Unavailable"
+                logging.error(f"Error reading temperature from register {reg}: {e}")
         time.sleep(interval)
+
+def configure_rs485_instrument():
+    instrument = minimalmodbus.Instrument('/dev/ttySC0', 1)  # RS485 connected at /dev/ttySC0 with slave address 1
+    instrument.serial.baudrate = 9600
+    instrument.serial.bytesize = 8
+    instrument.serial.parity = 'N'
+    instrument.serial.stopbits = 1
+    instrument.serial.timeout = 1
+    instrument.mode = minimalmodbus.MODE_RTU
+    return instrument
 
 @app.command()
 def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.g., can0"),
@@ -110,16 +119,17 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
 
         file_handler = logging.FileHandler(log_file, mode='w')
         logger.addHandler(file_handler)
-        logger.info("Timestamp,ID,Ext,RTR,Dir,Bus,Len,Data,Temperature_1,Temperature_2,Temperature_3,Temperature_4,Temperature_5,Temperature_6,Power")
+        logger.info("Timestamp,ID,Ext,RTR,Dir,Bus,Len,Data,Temperature_1,Temperature_2,Temperature_3,Temperature_4,Power")
         return log_file
 
     log_file = rotate_log_file()
 
-    sensors = W1ThermSensor.get_available_sensors()
-    sensor_count = len(sensors)
-    temperatures = ["Unavailable"] * 6
+    # RS485 configuration for temperature readings
+    instrument = configure_rs485_instrument()
+    temp_registers = [160, 161, 162, 163]
+    temperatures = ["Unavailable"] * 4
 
-    temp_thread = threading.Thread(target=read_temperatures, args=(sensors, sensor_count, 2, stop_event, temperatures))
+    temp_thread = threading.Thread(target=read_rs485_temperatures, args=(instrument, temp_registers, 5, stop_event, temperatures))
     temp_thread.start()
 
     def internet_check_loop():
@@ -181,7 +191,6 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
         GPIO.cleanup()  # Clean up GPIO
         if logger.handlers:
             logger.handlers[0].close()
-
 
 if __name__ == "__main__":
     app()
