@@ -17,7 +17,7 @@ import minimalmodbus
 
 # Google Drive API Parameters
 SERVICE_ACCOUNT_FILE = '/home/logger/KG_logger/bamboo-reason-433311-m0-2f856dd03538.json'
-FOLDER_ID = '1XV515xYP53G1e2EvSIF4Ec8tfusvlRlU'
+FOLDER_ID = '15nPujuibsb0ypqIhYA014Xx_KYAJG6bu'
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
 timezone = pytz.timezone('Europe/Moscow')
