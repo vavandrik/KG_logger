@@ -90,7 +90,7 @@ def configure_rs485_instrument():
 @app.command()
 def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.g., can0"),
                  log_dir: str = typer.Argument("./logs", help="Directory to save log files"),
-                 log_duration: int = typer.Argument(10, help="Log duration in minutes"),
+                 log_duration: int = typer.Argument(1, help="Log duration in minutes"),
                  log_name: str = typer.Option("can_log", help='Optional base name for the log file'),
                  check_interval: int = typer.Option(30, help='Interval for checking internet connection in seconds')
                  ):
