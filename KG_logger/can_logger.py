@@ -129,7 +129,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
     temp_registers = [160, 161, 162, 163]
     temperatures = ["Unavailable"] * 4
 
-    temp_thread = threading.Thread(target=read_rs485_temperatures, args=(instrument, temp_registers, 5, stop_event, temperatures))
+    temp_thread = threading.Thread(target=read_rs485_temperatures, args=(instrument, temp_registers, 1, stop_event, temperatures))
     temp_thread.start()
 
     def internet_check_loop():
