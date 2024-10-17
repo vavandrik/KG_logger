@@ -1,3 +1,4 @@
+import minimalmodbus
 from google.oauth2 import service_account
 import pytz
 from googleapiclient.discovery import build
@@ -13,7 +14,6 @@ import time
 import threading
 import requests
 import RPi.GPIO as GPIO
-import minimalmodbus
 
 # Google Drive API Parameters
 SERVICE_ACCOUNT_FILE = '/home/logger/KG_logger/bamboo-reason-433311-m0-2f856dd03538.json'
@@ -51,19 +51,32 @@ def upload_file_to_gdrive(file_path, folder_id, mime_type='text/csv'):
             media_body=media,
             fields='id'
         ).execute()
-        os.remove(file_path)  # Delete the file after successful upload
         logging.info(f"File ID: {file.get('id')} uploaded to folder ID: {folder_id}.")
+        return True
     except Exception as e:
         logging.error(f"Failed to upload {file_path} to Google Drive: {e}")
+        return False
 
-def upload_pending_files(log_dir, current_log_file):
+def upload_pending_files(log_dir):
     log_files = sorted(Path(log_dir).glob("*.csv"))
-    log_files_to_upload = [f for f in log_files if f != current_log_file]
+    if not log_files:
+        return
 
-    with ThreadPoolExecutor(max_workers=5) as executor:  # Use thread pool for parallel uploads
-        futures = [executor.submit(upload_file_to_gdrive, log_file, FOLDER_ID) for log_file in log_files_to_upload]
-        for future in futures:
-            future.result()  # Wait for all uploads to complete
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = []
+        for log_file in log_files:
+            # Skip files that are still being written to (have .tmp extension)
+            if log_file.suffix == '.tmp':
+                continue
+            futures.append(executor.submit(upload_file_to_gdrive, log_file, FOLDER_ID))
+        for future, log_file in zip(futures, log_files):
+            success = future.result()
+            if success:
+                try:
+                    os.remove(log_file)
+                    logging.info(f"Deleted local file {log_file}")
+                except Exception as e:
+                    logging.error(f"Failed to delete local file {log_file}: {e}")
 
 def read_rs485_temperatures(instrument, temp_registers, interval, stop_event, temperatures):
     while not stop_event.is_set():
@@ -87,6 +100,32 @@ def configure_rs485_instrument():
     instrument.mode = minimalmodbus.MODE_RTU
     return instrument
 
+def rotate_log_file(log_dir, log_name, logger):
+    timestamp = datetime.now(timezone).strftime("%Y-%m-%d_%H-%M-%S")
+    log_file = Path(log_dir) / f"{log_name}_{timestamp}.csv"
+    tmp_log_file = log_file.with_suffix('.tmp')
+
+    if logger.handlers:
+        logger.removeHandler(logger.handlers[0])
+
+    file_handler = logging.FileHandler(tmp_log_file, mode='w')
+    logger.addHandler(file_handler)
+    logger.info("Timestamp,ID,Ext,RTR,Dir,Bus,Len,Data,Temperature_1,Temperature_2,Temperature_3,Temperature_4,Power")
+
+    return tmp_log_file
+
+def finalize_log_file(tmp_log_file):
+    # Close the current file handler
+    for handler in logging.getLogger('CAN_Logger').handlers:
+        if isinstance(handler, logging.FileHandler):
+            handler.close()
+            logging.getLogger('CAN_Logger').removeHandler(handler)
+
+    # Rename the temporary log file to the final .csv file
+    final_log_file = tmp_log_file.with_suffix('.csv')
+    os.rename(tmp_log_file, final_log_file)
+    return final_log_file
+
 @app.command()
 def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.g., can0"),
                  log_dir: str = typer.Argument("./logs", help="Directory to save log files"),
@@ -99,30 +138,14 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
     logging.basicConfig(level=logging.DEBUG)
     logger = logging.getLogger('CAN_Logger')
 
-    log_number = 0
-    log_start_time = datetime.now(timezone)
     stop_event = threading.Event()
 
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(16, GPIO.IN)
     GPIO.setup(26, GPIO.OUT)
 
-    def rotate_log_file():
-        nonlocal log_number, log_start_time, log_dir
-        log_number += 1
-        log_start_time = datetime.now(timezone)
-        timestamp = log_start_time.strftime("%Y-%m-%d_%H-%M-%S")
-        log_file = Path(log_dir) / f"{log_name}_{timestamp}.csv"
-
-        if logger.handlers:
-            logger.removeHandler(logger.handlers[0])
-
-        file_handler = logging.FileHandler(log_file, mode='w')
-        logger.addHandler(file_handler)
-        logger.info("Timestamp,ID,Ext,RTR,Dir,Bus,Len,Data,Temperature_1,Temperature_2,Temperature_3,Temperature_4,Power")
-        return log_file
-
-    log_file = rotate_log_file()
+    log_file = rotate_log_file(log_dir, log_name, logger)
+    log_start_time = datetime.now(timezone)
 
     # RS485 configuration for temperature readings
     instrument = configure_rs485_instrument()
@@ -135,7 +158,7 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
     def internet_check_loop():
         while not stop_event.is_set():
             if check_internet():
-                upload_pending_files(log_dir, log_file)
+                upload_pending_files(log_dir)
             time.sleep(check_interval)
 
     internet_thread = threading.Thread(target=internet_check_loop)
@@ -173,7 +196,11 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
 
             # Rotate log if duration is exceeded
             if datetime.now(timezone) - log_start_time >= timedelta(minutes=log_duration):
-                log_file = rotate_log_file()
+                # Finalize the current log file
+                final_log_file = finalize_log_file(log_file)
+                # Start a new log file
+                log_file = rotate_log_file(log_dir, log_name, logger)
+                log_start_time = datetime.now(timezone)
 
     except (OSError, can.CanError) as e:
         logger.error(f"Error with CAN interface: {e}")
@@ -181,7 +208,9 @@ def log_can_data(interface: str = typer.Argument("can0", help="CAN interface, e.
     except KeyboardInterrupt:
         logger.warning("KeyboardInterrupt received, saving and uploading log file.")
     finally:
-        upload_pending_files(log_dir, None)
+        # Finalize and upload the last log file
+        final_log_file = finalize_log_file(log_file)
+        upload_pending_files(log_dir)
         stop_event.set()  # Stop threads
         temp_thread.join()
         internet_thread.join()
